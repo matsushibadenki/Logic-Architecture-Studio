@@ -1,0 +1,21 @@
+//! Rust-owned instanced renderer. The host supplies a texture or native surface.
+mod curves;
+mod gpu;
+mod upload;
+pub use upload::*;
+mod profile;
+pub use profile::*;
+mod groups;
+mod labels;
+mod text;
+pub use cosmic_text;
+pub use labels::*;
+pub use text::TextStats;
+mod scene;
+mod surface;
+mod theme;
+pub use gpu::*;
+pub use scene::*;
+pub use surface::*;
+pub use theme::*;
+pub use wgpu;

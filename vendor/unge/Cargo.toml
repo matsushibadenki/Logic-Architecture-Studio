@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/unge-core", "crates/unge-interaction", "crates/unge-render"]
+resolver = "2"

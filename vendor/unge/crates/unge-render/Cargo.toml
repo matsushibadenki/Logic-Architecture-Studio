@@ -1,0 +1,23 @@
+[package]
+name = "unge-render"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+[dependencies]
+unge-interaction = { path = "../unge-interaction" }
+unge-core = { path = "../unge-core" }
+wgpu = "27.0.1"
+bytemuck = { version = "1", features = ["derive"] }
+cosmic-text = "=0.19.0"
+serde = { version = "1", features = ["derive"] }
+[dev-dependencies]
+serde_json = "1"
+pollster = "1.0.1"
+
+[features]
+schema = ["dep:schemars", "unge-core/schema", "unge-interaction/schema"]
+
+[dependencies.schemars]
+version = "=1.2.3"
+optional = true
+features = ["uuid1"]

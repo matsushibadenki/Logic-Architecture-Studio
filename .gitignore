@@ -1,0 +1,41 @@
+# Rust / Tauri build output
+/target/
+/vendor/unge/target/
+/src-tauri/target/
+/src-tauri/gen/
+
+# JavaScript / Vite / TypeScript
+node_modules/
+/dist/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local design state, IPC sockets, EDA jobs and recovery files
+.logic/
+*.sock
+*.vcd
+*.fst
+
+# Local credentials and machine-specific settings
+.env
+.env.*
+!.env.example
+
+# Test / coverage output
+/test-results/
+/playwright-report/
+/coverage/
+
+# Operating system and editor temporary files
+.DS_Store
+._*
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Cargo.lock and package-lock.json are intentionally committed for this application.

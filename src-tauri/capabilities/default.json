@@ -1,0 +1,1 @@
+{"identifier": "default", "description": "Local editor windows", "windows": ["main", "recovery", "workspace-start", "panel-*"], "permissions": ["core:default"], "webviews": ["controls", "panel-*", "split-*"]}

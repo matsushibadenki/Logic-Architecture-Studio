@@ -1,0 +1,52 @@
+:root {
+  --color-paper: #15181e;
+  --color-panel: #1c2129;
+  --color-panel-deep: #191d24;
+  --color-elevated: #242c38;
+  --color-ink: #dce3ed;
+  --color-muted: #98a5b8;
+  --color-dim: #788699;
+  --color-rule: #323b49;
+  --color-accent: #8eb5fa;
+  --color-accent-soft: #273b58;
+  --color-on-accent: #101d31;
+  --color-success: #89c9ac;
+  --color-warning: #e5b982;
+  --color-danger: #e6a5a2;
+  --color-grid: #303847;
+  --color-shadow: #00000066;
+  --color-transparent: transparent;
+  --font-body:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans JP",
+    "Noto Sans SC", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-lg: 15px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --rule-width: 1px;
+  --dur-fast: 120ms;
+  --ease-ui: ease-out;
+}
+/* Role tones from UNGE Theme::Dark. Semantic color, not execution status. */
+:root {
+  --color-node-mint: #5fd5b8;
+  --color-node-blue: #78a2ff;
+  --color-node-violet: #b69df9;
+  --color-node-amber: #f1bd68;
+  --color-node-rose: #ee8ba0;
+  --color-node-body: #21252f;
+  --color-node-border: #6b788c;
+  --color-node-text: #eaeef6;
+  --color-node-muted: #a9b5ca;
+  --color-node-canvas: #14161c;
+  --color-node-grid: #373d4a;
+}

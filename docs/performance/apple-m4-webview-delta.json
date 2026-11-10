@@ -1,0 +1,2172 @@
+{
+  "warmup_moves": 2,
+  "measured_moves_per_run": 10,
+  "runs": [
+    {
+      "source": "las-web-ui-100-full.json",
+      "profile": "release",
+      "web_sync": "full",
+      "nodes": 100,
+      "measured_samples": 10,
+      "commit_ms": {
+        "p50": 8.865999500000001,
+        "p95": 13.0375
+      },
+      "native_present_request_ms": {
+        "p50": 33.2526035,
+        "p95": 35.4755
+      },
+      "all_webviews_paint_opportunity_ms": {
+        "p50": 125.3032915,
+        "p95": 142.468334
+      },
+      "one_webview_sync_body_bytes": {
+        "p50": 17119.5,
+        "p95": 17366
+      },
+      "samples": [
+        {
+          "commit_ms": 7.695042,
+          "native_present_request_ms": 33.160125,
+          "nodes": 100,
+          "revision": 1,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 124.513542,
+              "sync_body_bytes": 16764
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 124.737375,
+              "sync_body_bytes": 16764
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 124.30716699999999,
+              "sync_body_bytes": 16764
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.12308399999999,
+              "sync_body_bytes": 16764
+            }
+          }
+        },
+        {
+          "commit_ms": 8.250791,
+          "native_present_request_ms": 33.301790999999994,
+          "nodes": 100,
+          "revision": 2,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 124.6485,
+              "sync_body_bytes": 16791
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.11329099999999,
+              "sync_body_bytes": 16791
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.53979100000001,
+              "sync_body_bytes": 16791
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.33512499999999,
+              "sync_body_bytes": 16791
+            }
+          }
+        },
+        {
+          "commit_ms": 8.916666,
+          "native_present_request_ms": 33.191041,
+          "nodes": 100,
+          "revision": 3,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.99866600000001,
+              "sync_body_bytes": 16878
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.822708,
+              "sync_body_bytes": 16878
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.147,
+              "sync_body_bytes": 16878
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.57154100000001,
+              "sync_body_bytes": 16878
+            }
+          }
+        },
+        {
+          "commit_ms": 8.902916000000001,
+          "native_present_request_ms": 33.700165999999996,
+          "nodes": 100,
+          "revision": 4,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.455083,
+              "sync_body_bytes": 16905
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.2325,
+              "sync_body_bytes": 16905
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 124.863708,
+              "sync_body_bytes": 16905
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.63908300000001,
+              "sync_body_bytes": 16905
+            }
+          }
+        },
+        {
+          "commit_ms": 7.969375000000001,
+          "native_present_request_ms": 32.363749999999996,
+          "nodes": 100,
+          "revision": 5,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 124.528042,
+              "sync_body_bytes": 16992
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 124.34475,
+              "sync_body_bytes": 16992
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 108.109667,
+              "sync_body_bytes": 16992
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 107.84320799999999,
+              "sync_body_bytes": 16992
+            }
+          }
+        },
+        {
+          "commit_ms": 13.0375,
+          "native_present_request_ms": 33.750625,
+          "nodes": 100,
+          "revision": 6,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 75.27262499999999,
+              "sync_body_bytes": 17019
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 91.94333400000001,
+              "sync_body_bytes": 17019
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 92.148959,
+              "sync_body_bytes": 17019
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 91.50850000000001,
+              "sync_body_bytes": 17019
+            }
+          }
+        },
+        {
+          "commit_ms": 8.694708,
+          "native_present_request_ms": 33.314166,
+          "nodes": 100,
+          "revision": 7,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.497625,
+              "sync_body_bytes": 17106
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.9485,
+              "sync_body_bytes": 17106
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.143583,
+              "sync_body_bytes": 17106
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.74412500000001,
+              "sync_body_bytes": 17106
+            }
+          }
+        },
+        {
+          "commit_ms": 8.650375,
+          "native_present_request_ms": 33.481209,
+          "nodes": 100,
+          "revision": 8,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.32458399999999,
+              "sync_body_bytes": 17133
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 142.325167,
+              "sync_body_bytes": 17133
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 142.468334,
+              "sync_body_bytes": 17133
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 142.102375,
+              "sync_body_bytes": 17133
+            }
+          }
+        },
+        {
+          "commit_ms": 8.678333,
+          "native_present_request_ms": 32.926207999999995,
+          "nodes": 100,
+          "revision": 9,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 124.40700000000001,
+              "sync_body_bytes": 17220
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 123.534666,
+              "sync_body_bytes": 17220
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 124.502,
+              "sync_body_bytes": 17220
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 124.255666,
+              "sync_body_bytes": 17220
+            }
+          }
+        },
+        {
+          "commit_ms": 9.594999999999999,
+          "native_present_request_ms": 32.3855,
+          "nodes": 100,
+          "revision": 10,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 124.724667,
+              "sync_body_bytes": 17250
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.04416700000002,
+              "sync_body_bytes": 17250
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 124.44524999999999,
+              "sync_body_bytes": 17250
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 124.935875,
+              "sync_body_bytes": 17250
+            }
+          }
+        },
+        {
+          "commit_ms": 10.026083,
+          "native_present_request_ms": 35.4755,
+          "nodes": 100,
+          "revision": 11,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.358833,
+              "sync_body_bytes": 17338
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.07991600000001,
+              "sync_body_bytes": 17338
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 124.61058299999999,
+              "sync_body_bytes": 17338
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 124.862541,
+              "sync_body_bytes": 17338
+            }
+          }
+        },
+        {
+          "commit_ms": 8.829082999999999,
+          "native_present_request_ms": 32.331625,
+          "nodes": 100,
+          "revision": 12,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 124.62187499999999,
+              "sync_body_bytes": 17366
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 124.8895,
+              "sync_body_bytes": 17366
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.13329200000001,
+              "sync_body_bytes": 17366
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 125.24775,
+              "sync_body_bytes": 17366
+            }
+          }
+        }
+      ]
+    },
+    {
+      "source": "las-web-ui-100-delta.json",
+      "profile": "release",
+      "web_sync": "delta",
+      "nodes": 100,
+      "measured_samples": 10,
+      "commit_ms": {
+        "p50": 9.2671455,
+        "p95": 13.517292
+      },
+      "native_present_request_ms": {
+        "p50": 33.48991650000001,
+        "p95": 34.182625
+      },
+      "all_webviews_paint_opportunity_ms": {
+        "p50": 59.0958125,
+        "p95": 59.863667
+      },
+      "one_webview_sync_body_bytes": {
+        "p50": 356.0,
+        "p95": 373
+      },
+      "samples": [
+        {
+          "commit_ms": 5.886459,
+          "native_present_request_ms": 33.601,
+          "nodes": 100,
+          "revision": 1,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 58.527375,
+              "sync_body_bytes": 385
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 58.296625,
+              "sync_body_bytes": 385
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 57.638834,
+              "sync_body_bytes": 385
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 57.3505,
+              "sync_body_bytes": 385
+            }
+          }
+        },
+        {
+          "commit_ms": 6.0885419999999995,
+          "native_present_request_ms": 32.519667000000005,
+          "nodes": 100,
+          "revision": 2,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 56.965500000000006,
+              "sync_body_bytes": 339
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 57.944833,
+              "sync_body_bytes": 339
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 57.716417,
+              "sync_body_bytes": 339
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 57.831458000000005,
+              "sync_body_bytes": 339
+            }
+          }
+        },
+        {
+          "commit_ms": 7.640625,
+          "native_present_request_ms": 33.557166,
+          "nodes": 100,
+          "revision": 3,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 59.620291,
+              "sync_body_bytes": 369
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 59.336583,
+              "sync_body_bytes": 369
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 59.476583,
+              "sync_body_bytes": 369
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 59.009958000000005,
+              "sync_body_bytes": 369
+            }
+          }
+        },
+        {
+          "commit_ms": 6.7623750000000005,
+          "native_present_request_ms": 33.38875,
+          "nodes": 100,
+          "revision": 4,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 58.03325,
+              "sync_body_bytes": 339
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 58.548875,
+              "sync_body_bytes": 339
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 58.68325,
+              "sync_body_bytes": 339
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 58.828625,
+              "sync_body_bytes": 339
+            }
+          }
+        },
+        {
+          "commit_ms": 7.685083,
+          "native_present_request_ms": 33.410292,
+          "nodes": 100,
+          "revision": 5,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 59.618542,
+              "sync_body_bytes": 369
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 58.939083000000004,
+              "sync_body_bytes": 369
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 59.395375,
+              "sync_body_bytes": 369
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 59.807792,
+              "sync_body_bytes": 369
+            }
+          }
+        },
+        {
+          "commit_ms": 9.24525,
+          "native_present_request_ms": 34.024375,
+          "nodes": 100,
+          "revision": 6,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.425542,
+              "sync_body_bytes": 339
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 58.959959,
+              "sync_body_bytes": 339
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 59.363,
+              "sync_body_bytes": 339
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.8115,
+              "sync_body_bytes": 339
+            }
+          }
+        },
+        {
+          "commit_ms": 8.996374999999999,
+          "native_present_request_ms": 33.422667000000004,
+          "nodes": 100,
+          "revision": 7,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 59.362208,
+              "sync_body_bytes": 369
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 58.954417,
+              "sync_body_bytes": 369
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 59.863667,
+              "sync_body_bytes": 369
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 59.631833,
+              "sync_body_bytes": 369
+            }
+          }
+        },
+        {
+          "commit_ms": 9.289041,
+          "native_present_request_ms": 33.326750000000004,
+          "nodes": 100,
+          "revision": 8,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 59.184291,
+              "sync_body_bytes": 339
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 58.873000000000005,
+              "sync_body_bytes": 339
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 59.291000000000004,
+              "sync_body_bytes": 339
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 59.440791,
+              "sync_body_bytes": 339
+            }
+          }
+        },
+        {
+          "commit_ms": 11.696917,
+          "native_present_request_ms": 34.182625,
+          "nodes": 100,
+          "revision": 9,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 43.083542,
+              "sync_body_bytes": 369
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.747875,
+              "sync_body_bytes": 369
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 43.34275,
+              "sync_body_bytes": 369
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.220208,
+              "sync_body_bytes": 369
+            }
+          }
+        },
+        {
+          "commit_ms": 10.714041,
+          "native_present_request_ms": 33.561166,
+          "nodes": 100,
+          "revision": 10,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 43.633458,
+              "sync_body_bytes": 342
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 43.7455,
+              "sync_body_bytes": 342
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 43.4115,
+              "sync_body_bytes": 342
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 43.125666,
+              "sync_body_bytes": 342
+            }
+          }
+        },
+        {
+          "commit_ms": 13.435834,
+          "native_present_request_ms": 32.822708999999996,
+          "nodes": 100,
+          "revision": 11,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.019084,
+              "sync_body_bytes": 373
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.231291999999996,
+              "sync_body_bytes": 373
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 41.76499999999999,
+              "sync_body_bytes": 373
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 41.497292,
+              "sync_body_bytes": 373
+            }
+          }
+        },
+        {
+          "commit_ms": 13.517292,
+          "native_present_request_ms": 33.631583,
+          "nodes": 100,
+          "revision": 12,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.587,
+              "sync_body_bytes": 343
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.179542,
+              "sync_body_bytes": 343
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 43.192708,
+              "sync_body_bytes": 343
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.987958,
+              "sync_body_bytes": 343
+            }
+          }
+        }
+      ]
+    },
+    {
+      "source": "las-web-ui-500-full.json",
+      "profile": "release",
+      "web_sync": "full",
+      "nodes": 500,
+      "measured_samples": 10,
+      "commit_ms": {
+        "p50": 15.348167,
+        "p95": 17.837792
+      },
+      "native_present_request_ms": {
+        "p50": 477.4968335,
+        "p95": 522.7067499999999
+      },
+      "all_webviews_paint_opportunity_ms": {
+        "p50": 532.4612915,
+        "p95": 558.269041
+      },
+      "one_webview_sync_body_bytes": {
+        "p50": 87326.5,
+        "p95": 87573
+      },
+      "samples": [
+        {
+          "commit_ms": 19.819291999999997,
+          "native_present_request_ms": 448.030167,
+          "nodes": 500,
+          "revision": 1,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 524.448709,
+              "sync_body_bytes": 86971
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 524.257,
+              "sync_body_bytes": 86971
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 541.883334,
+              "sync_body_bytes": 86971
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 524.57475,
+              "sync_body_bytes": 86971
+            }
+          }
+        },
+        {
+          "commit_ms": 14.909458,
+          "native_present_request_ms": 442.71187499999996,
+          "nodes": 500,
+          "revision": 2,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 508.47441599999996,
+              "sync_body_bytes": 86998
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 524.496166,
+              "sync_body_bytes": 86998
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 508.27541600000006,
+              "sync_body_bytes": 86998
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 508.01945800000004,
+              "sync_body_bytes": 86998
+            }
+          }
+        },
+        {
+          "commit_ms": 14.441374999999999,
+          "native_present_request_ms": 463.09645900000004,
+          "nodes": 500,
+          "revision": 3,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 491.046042,
+              "sync_body_bytes": 87085
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 509.050459,
+              "sync_body_bytes": 87085
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 508.835834,
+              "sync_body_bytes": 87085
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 508.530584,
+              "sync_body_bytes": 87085
+            }
+          }
+        },
+        {
+          "commit_ms": 15.104625,
+          "native_present_request_ms": 481.323667,
+          "nodes": 500,
+          "revision": 4,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 526.014708,
+              "sync_body_bytes": 87112
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 525.443208,
+              "sync_body_bytes": 87112
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 525.8552920000001,
+              "sync_body_bytes": 87112
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 526.2170000000001,
+              "sync_body_bytes": 87112
+            }
+          }
+        },
+        {
+          "commit_ms": 15.241542,
+          "native_present_request_ms": 470.987792,
+          "nodes": 500,
+          "revision": 5,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 523.1693750000001,
+              "sync_body_bytes": 87199
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 524.2156669999999,
+              "sync_body_bytes": 87199
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 523.9936250000001,
+              "sync_body_bytes": 87199
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 524.357375,
+              "sync_body_bytes": 87199
+            }
+          }
+        },
+        {
+          "commit_ms": 15.223875,
+          "native_present_request_ms": 473.66999999999996,
+          "nodes": 500,
+          "revision": 6,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 525.62825,
+              "sync_body_bytes": 87226
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 525.1587920000001,
+              "sync_body_bytes": 87226
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 525.438958,
+              "sync_body_bytes": 87226
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 525.9045,
+              "sync_body_bytes": 87226
+            }
+          }
+        },
+        {
+          "commit_ms": 14.078792,
+          "native_present_request_ms": 426.139667,
+          "nodes": 500,
+          "revision": 7,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 541.6904999999999,
+              "sync_body_bytes": 87313
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 541.466625,
+              "sync_body_bytes": 87313
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 541.891834,
+              "sync_body_bytes": 87313
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 492.06375,
+              "sync_body_bytes": 87313
+            }
+          }
+        },
+        {
+          "commit_ms": 15.454792,
+          "native_present_request_ms": 485.330667,
+          "nodes": 500,
+          "revision": 8,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 525.645125,
+              "sync_body_bytes": 87340
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 525.352167,
+              "sync_body_bytes": 87340
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 542.000042,
+              "sync_body_bytes": 87340
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 507.81100000000004,
+              "sync_body_bytes": 87340
+            }
+          }
+        },
+        {
+          "commit_ms": 17.430958,
+          "native_present_request_ms": 472.292416,
+          "nodes": 500,
+          "revision": 9,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 507.61729099999997,
+              "sync_body_bytes": 87427
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 504.74137500000006,
+              "sync_body_bytes": 87427
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 507.3785,
+              "sync_body_bytes": 87427
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 507.75366600000007,
+              "sync_body_bytes": 87427
+            }
+          }
+        },
+        {
+          "commit_ms": 16.789125,
+          "native_present_request_ms": 522.7067499999999,
+          "nodes": 500,
+          "revision": 10,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 555.976833,
+              "sync_body_bytes": 87457
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 556.211541,
+              "sync_body_bytes": 87457
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 556.3685830000001,
+              "sync_body_bytes": 87457
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 555.525125,
+              "sync_body_bytes": 87457
+            }
+          }
+        },
+        {
+          "commit_ms": 17.745708,
+          "native_present_request_ms": 510.460958,
+          "nodes": 500,
+          "revision": 11,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 541.4467080000001,
+              "sync_body_bytes": 87545
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 540.89175,
+              "sync_body_bytes": 87545
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 558.269041,
+              "sync_body_bytes": 87545
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 557.953916,
+              "sync_body_bytes": 87545
+            }
+          }
+        },
+        {
+          "commit_ms": 17.837792,
+          "native_present_request_ms": 493.297792,
+          "nodes": 500,
+          "revision": 12,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 538.705583,
+              "sync_body_bytes": 87573
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 472.23525,
+              "sync_body_bytes": 87573
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 538.537583,
+              "sync_body_bytes": 87573
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 538.253042,
+              "sync_body_bytes": 87573
+            }
+          }
+        }
+      ]
+    },
+    {
+      "source": "las-web-ui-500-delta.json",
+      "profile": "release",
+      "web_sync": "delta",
+      "nodes": 500,
+      "measured_samples": 10,
+      "commit_ms": {
+        "p50": 16.759604,
+        "p95": 30.169125
+      },
+      "native_present_request_ms": {
+        "p50": 66.56804199999999,
+        "p95": 89.02470799999999
+      },
+      "all_webviews_paint_opportunity_ms": {
+        "p50": 42.509792,
+        "p95": 62.927707999999996
+      },
+      "one_webview_sync_body_bytes": {
+        "p50": 356.0,
+        "p95": 373
+      },
+      "samples": [
+        {
+          "commit_ms": 14.196,
+          "native_present_request_ms": 56.709958,
+          "nodes": 500,
+          "revision": 1,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.022458,
+              "sync_body_bytes": 385
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.3005,
+              "sync_body_bytes": 385
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.499916999999996,
+              "sync_body_bytes": 385
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.201167,
+              "sync_body_bytes": 385
+            }
+          }
+        },
+        {
+          "commit_ms": 17.056542,
+          "native_present_request_ms": 66.469333,
+          "nodes": 500,
+          "revision": 2,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 41.287875,
+              "sync_body_bytes": 339
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 40.583667,
+              "sync_body_bytes": 339
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 41.44175,
+              "sync_body_bytes": 339
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 40.754833,
+              "sync_body_bytes": 339
+            }
+          }
+        },
+        {
+          "commit_ms": 15.390416,
+          "native_present_request_ms": 63.206083,
+          "nodes": 500,
+          "revision": 3,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 40.557165999999995,
+              "sync_body_bytes": 369
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 41.845458,
+              "sync_body_bytes": 369
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 41.455791,
+              "sync_body_bytes": 369
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 41.628040999999996,
+              "sync_body_bytes": 369
+            }
+          }
+        },
+        {
+          "commit_ms": 16.45975,
+          "native_present_request_ms": 68.280792,
+          "nodes": 500,
+          "revision": 4,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.7175,
+              "sync_body_bytes": 339
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 41.883917,
+              "sync_body_bytes": 339
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.270792,
+              "sync_body_bytes": 339
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.519584,
+              "sync_body_bytes": 339
+            }
+          }
+        },
+        {
+          "commit_ms": 13.081583,
+          "native_present_request_ms": 64.85529199999999,
+          "nodes": 500,
+          "revision": 5,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 41.653208,
+              "sync_body_bytes": 369
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 41.054583,
+              "sync_body_bytes": 369
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 41.328333,
+              "sync_body_bytes": 369
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 40.583083,
+              "sync_body_bytes": 369
+            }
+          }
+        },
+        {
+          "commit_ms": 15.20125,
+          "native_present_request_ms": 69.105417,
+          "nodes": 500,
+          "revision": 6,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 41.089709,
+              "sync_body_bytes": 339
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.135625000000005,
+              "sync_body_bytes": 339
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 41.877417,
+              "sync_body_bytes": 339
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.425208999999995,
+              "sync_body_bytes": 339
+            }
+          }
+        },
+        {
+          "commit_ms": 16.11675,
+          "native_present_request_ms": 64.335583,
+          "nodes": 500,
+          "revision": 7,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.083957999999996,
+              "sync_body_bytes": 369
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 41.088125000000005,
+              "sync_body_bytes": 369
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 41.858542,
+              "sync_body_bytes": 369
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 41.458667,
+              "sync_body_bytes": 369
+            }
+          }
+        },
+        {
+          "commit_ms": 30.169125,
+          "native_present_request_ms": 69.106,
+          "nodes": 500,
+          "revision": 8,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 57.822209,
+              "sync_body_bytes": 339
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 57.669917,
+              "sync_body_bytes": 339
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 57.902708999999994,
+              "sync_body_bytes": 339
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 57.9745,
+              "sync_body_bytes": 339
+            }
+          }
+        },
+        {
+          "commit_ms": 29.94925,
+          "native_present_request_ms": 89.02470799999999,
+          "nodes": 500,
+          "revision": 9,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 58.880333,
+              "sync_body_bytes": 369
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 58.995166000000005,
+              "sync_body_bytes": 369
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 58.722083,
+              "sync_body_bytes": 369
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 58.408375,
+              "sync_body_bytes": 369
+            }
+          }
+        },
+        {
+          "commit_ms": 29.448791,
+          "native_present_request_ms": 74.826291,
+          "nodes": 500,
+          "revision": 10,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 62.927707999999996,
+              "sync_body_bytes": 342
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 62.493208,
+              "sync_body_bytes": 342
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 58.069375,
+              "sync_body_bytes": 342
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 62.83950000000001,
+              "sync_body_bytes": 342
+            }
+          }
+        },
+        {
+          "commit_ms": 17.882042000000002,
+          "native_present_request_ms": 57.592125,
+          "nodes": 500,
+          "revision": 11,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 41.800375,
+              "sync_body_bytes": 373
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 40.554041999999995,
+              "sync_body_bytes": 373
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 41.487792000000006,
+              "sync_body_bytes": 373
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 41.399959,
+              "sync_body_bytes": 373
+            }
+          }
+        },
+        {
+          "commit_ms": 17.059458,
+          "native_present_request_ms": 54.064415999999994,
+          "nodes": 500,
+          "revision": 12,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.594375,
+              "sync_body_bytes": 343
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.074166000000005,
+              "sync_body_bytes": 343
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 41.745125,
+              "sync_body_bytes": 343
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 42.335583,
+              "sync_body_bytes": 343
+            }
+          }
+        }
+      ]
+    },
+    {
+      "source": "las-web-ui-2000-full.json",
+      "profile": "release",
+      "web_sync": "full",
+      "nodes": 2000,
+      "measured_samples": 10,
+      "commit_ms": {
+        "p50": 63.063687,
+        "p95": 91.77004099999999
+      },
+      "native_present_request_ms": {
+        "p50": 1209.729604,
+        "p95": 1688.313666
+      },
+      "all_webviews_paint_opportunity_ms": {
+        "p50": 1441.1270835,
+        "p95": 1788.9461250000002
+      },
+      "one_webview_sync_body_bytes": {
+        "p50": 359140.5,
+        "p95": 359387
+      },
+      "samples": [
+        {
+          "commit_ms": 47.760709,
+          "native_present_request_ms": 1501.270542,
+          "nodes": 2000,
+          "revision": 1,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1608.601959,
+              "sync_body_bytes": 358785
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1725.239417,
+              "sync_body_bytes": 358785
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1625.234334,
+              "sync_body_bytes": 358785
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1709.818125,
+              "sync_body_bytes": 358785
+            }
+          }
+        },
+        {
+          "commit_ms": 48.180958000000004,
+          "native_present_request_ms": 1631.6972079999998,
+          "nodes": 2000,
+          "revision": 2,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1791.145125,
+              "sync_body_bytes": 358812
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1841.084541,
+              "sync_body_bytes": 358812
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1857.8281250000002,
+              "sync_body_bytes": 358812
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1791.4430000000002,
+              "sync_body_bytes": 358812
+            }
+          }
+        },
+        {
+          "commit_ms": 51.584084000000004,
+          "native_present_request_ms": 1525.963,
+          "nodes": 2000,
+          "revision": 3,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1638.9247500000001,
+              "sync_body_bytes": 358899
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1772.2810419999998,
+              "sync_body_bytes": 358899
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1757.2868339999998,
+              "sync_body_bytes": 358899
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1788.9461250000002,
+              "sync_body_bytes": 358899
+            }
+          }
+        },
+        {
+          "commit_ms": 48.508750000000006,
+          "native_present_request_ms": 1688.313666,
+          "nodes": 2000,
+          "revision": 4,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1573.458666,
+              "sync_body_bytes": 358926
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1774.4955,
+              "sync_body_bytes": 358926
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1774.6740829999999,
+              "sync_body_bytes": 358926
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1758.03725,
+              "sync_body_bytes": 358926
+            }
+          }
+        },
+        {
+          "commit_ms": 55.080458,
+          "native_present_request_ms": 1225.504833,
+          "nodes": 2000,
+          "revision": 5,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1556.46675,
+              "sync_body_bytes": 359013
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1707.94175,
+              "sync_body_bytes": 359013
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1573.641083,
+              "sync_body_bytes": 359013
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1557.031083,
+              "sync_body_bytes": 359013
+            }
+          }
+        },
+        {
+          "commit_ms": 62.536958000000006,
+          "native_present_request_ms": 1103.2854160000002,
+          "nodes": 2000,
+          "revision": 6,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1308.532916,
+              "sync_body_bytes": 359040
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1325.0297500000001,
+              "sync_body_bytes": 359040
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1299.924625,
+              "sync_body_bytes": 359040
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1274.8384159999998,
+              "sync_body_bytes": 359040
+            }
+          }
+        },
+        {
+          "commit_ms": 57.697832999999996,
+          "native_present_request_ms": 1017.6535,
+          "nodes": 2000,
+          "revision": 7,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1225.042458,
+              "sync_body_bytes": 359127
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1257.9615,
+              "sync_body_bytes": 359127
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 776.9070409999999,
+              "sync_body_bytes": 359127
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1241.1881250000001,
+              "sync_body_bytes": 359127
+            }
+          }
+        },
+        {
+          "commit_ms": 69.999458,
+          "native_present_request_ms": 1079.825875,
+          "nodes": 2000,
+          "revision": 8,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1258.313291,
+              "sync_body_bytes": 359154
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1224.1509580000002,
+              "sync_body_bytes": 359154
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1158.368708,
+              "sync_body_bytes": 359154
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1241.126833,
+              "sync_body_bytes": 359154
+            }
+          }
+        },
+        {
+          "commit_ms": 91.77004099999999,
+          "native_present_request_ms": 1148.346958,
+          "nodes": 2000,
+          "revision": 9,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1091.1225,
+              "sync_body_bytes": 359241
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1307.814958,
+              "sync_body_bytes": 359241
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1374.1855,
+              "sync_body_bytes": 359241
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1208.290125,
+              "sync_body_bytes": 359241
+            }
+          }
+        },
+        {
+          "commit_ms": 67.99,
+          "native_present_request_ms": 1343.023375,
+          "nodes": 2000,
+          "revision": 10,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1508.0686669999998,
+              "sync_body_bytes": 359271
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1424.6479590000001,
+              "sync_body_bytes": 359271
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1491.96275,
+              "sync_body_bytes": 359271
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1491.564417,
+              "sync_body_bytes": 359271
+            }
+          }
+        },
+        {
+          "commit_ms": 63.590416,
+          "native_present_request_ms": 1365.9285,
+          "nodes": 2000,
+          "revision": 11,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1608.0338749999999,
+              "sync_body_bytes": 359359
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1608.3943330000002,
+              "sync_body_bytes": 359359
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1641.514625,
+              "sync_body_bytes": 359359
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1624.8748750000002,
+              "sync_body_bytes": 359359
+            }
+          }
+        },
+        {
+          "commit_ms": 68.03583300000001,
+          "native_present_request_ms": 1193.954375,
+          "nodes": 2000,
+          "revision": 12,
+          "webviews": {
+            "controls": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1357.290458,
+              "sync_body_bytes": 359387
+            },
+            "inspector": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1194.6312500000001,
+              "sync_body_bytes": 359387
+            },
+            "library": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1291.3522500000001,
+              "sync_body_bytes": 359387
+            },
+            "results": {
+              "kind": "snapshot",
+              "paint_opportunity_ms": 1256.392875,
+              "sync_body_bytes": 359387
+            }
+          }
+        }
+      ]
+    },
+    {
+      "source": "las-web-ui-2000-delta.json",
+      "profile": "release",
+      "web_sync": "delta",
+      "nodes": 2000,
+      "measured_samples": 10,
+      "commit_ms": {
+        "p50": 56.793375,
+        "p95": 103.05283399999999
+      },
+      "native_present_request_ms": {
+        "p50": 193.425063,
+        "p95": 257.115792
+      },
+      "all_webviews_paint_opportunity_ms": {
+        "p50": 83.2950415,
+        "p95": 142.135167
+      },
+      "one_webview_sync_body_bytes": {
+        "p50": 356.0,
+        "p95": 373
+      },
+      "samples": [
+        {
+          "commit_ms": 44.569667,
+          "native_present_request_ms": 176.743792,
+          "nodes": 2000,
+          "revision": 1,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 75.553458,
+              "sync_body_bytes": 385
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 75.672208,
+              "sync_body_bytes": 385
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 74.98075,
+              "sync_body_bytes": 385
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 75.414,
+              "sync_body_bytes": 385
+            }
+          }
+        },
+        {
+          "commit_ms": 46.13125,
+          "native_present_request_ms": 185.942708,
+          "nodes": 2000,
+          "revision": 2,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 75.915916,
+              "sync_body_bytes": 339
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 75.40925,
+              "sync_body_bytes": 339
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 75.747208,
+              "sync_body_bytes": 339
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 75.622208,
+              "sync_body_bytes": 339
+            }
+          }
+        },
+        {
+          "commit_ms": 47.035083,
+          "native_present_request_ms": 177.47,
+          "nodes": 2000,
+          "revision": 3,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 75.812875,
+              "sync_body_bytes": 369
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 75.45154099999999,
+              "sync_body_bytes": 369
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 75.956958,
+              "sync_body_bytes": 369
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 76.074958,
+              "sync_body_bytes": 369
+            }
+          }
+        },
+        {
+          "commit_ms": 47.756,
+          "native_present_request_ms": 188.366209,
+          "nodes": 2000,
+          "revision": 4,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 75.1705,
+              "sync_body_bytes": 339
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 75.272042,
+              "sync_body_bytes": 339
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 75.015,
+              "sync_body_bytes": 339
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 74.722667,
+              "sync_body_bytes": 339
+            }
+          }
+        },
+        {
+          "commit_ms": 51.400584,
+          "native_present_request_ms": 184.143709,
+          "nodes": 2000,
+          "revision": 5,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 73.46116699999999,
+              "sync_body_bytes": 369
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 73.716584,
+              "sync_body_bytes": 369
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 73.000084,
+              "sync_body_bytes": 369
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 73.89095900000001,
+              "sync_body_bytes": 369
+            }
+          }
+        },
+        {
+          "commit_ms": 54.945375,
+          "native_present_request_ms": 192.593417,
+          "nodes": 2000,
+          "revision": 6,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 74.59025,
+              "sync_body_bytes": 339
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 74.859917,
+              "sync_body_bytes": 339
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 75.120667,
+              "sync_body_bytes": 339
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 74.975375,
+              "sync_body_bytes": 339
+            }
+          }
+        },
+        {
+          "commit_ms": 54.704084,
+          "native_present_request_ms": 184.911125,
+          "nodes": 2000,
+          "revision": 7,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 72.423709,
+              "sync_body_bytes": 369
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 73.119125,
+              "sync_body_bytes": 369
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 72.806084,
+              "sync_body_bytes": 369
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 72.964959,
+              "sync_body_bytes": 369
+            }
+          }
+        },
+        {
+          "commit_ms": 58.641375000000004,
+          "native_present_request_ms": 199.44625,
+          "nodes": 2000,
+          "revision": 8,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 91.339,
+              "sync_body_bytes": 339
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 91.62629199999999,
+              "sync_body_bytes": 339
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 92.082,
+              "sync_body_bytes": 339
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 91.850292,
+              "sync_body_bytes": 339
+            }
+          }
+        },
+        {
+          "commit_ms": 60.629125,
+          "native_present_request_ms": 199.452834,
+          "nodes": 2000,
+          "revision": 9,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 90.515125,
+              "sync_body_bytes": 369
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 90.166625,
+              "sync_body_bytes": 369
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 90.35575,
+              "sync_body_bytes": 369
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 89.832667,
+              "sync_body_bytes": 369
+            }
+          }
+        },
+        {
+          "commit_ms": 103.05283399999999,
+          "native_present_request_ms": 257.115792,
+          "nodes": 2000,
+          "revision": 10,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 140.804167,
+              "sync_body_bytes": 342
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 142.135167,
+              "sync_body_bytes": 342
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 141.885792,
+              "sync_body_bytes": 342
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 142.04554199999998,
+              "sync_body_bytes": 342
+            }
+          }
+        },
+        {
+          "commit_ms": 67.33125,
+          "native_present_request_ms": 205.68408399999998,
+          "nodes": 2000,
+          "revision": 11,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 91.390875,
+              "sync_body_bytes": 373
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 91.21325,
+              "sync_body_bytes": 373
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 90.850125,
+              "sync_body_bytes": 373
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 91.558125,
+              "sync_body_bytes": 373
+            }
+          }
+        },
+        {
+          "commit_ms": 66.818834,
+          "native_present_request_ms": 194.256709,
+          "nodes": 2000,
+          "revision": 12,
+          "webviews": {
+            "controls": {
+              "kind": "delta",
+              "paint_opportunity_ms": 91.89450000000001,
+              "sync_body_bytes": 343
+            },
+            "inspector": {
+              "kind": "delta",
+              "paint_opportunity_ms": 91.691584,
+              "sync_body_bytes": 343
+            },
+            "library": {
+              "kind": "delta",
+              "paint_opportunity_ms": 91.122,
+              "sync_body_bytes": 343
+            },
+            "results": {
+              "kind": "delta",
+              "paint_opportunity_ms": 91.479875,
+              "sync_body_bytes": 343
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

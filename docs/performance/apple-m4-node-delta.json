@@ -1,0 +1,271 @@
+{
+  "adapter": "AdapterInfo { name: \"Apple M4\", vendor: 0, device: 0, device_type: IntegratedGpu, driver: \"\", driver_info: \"\", backend: Metal }",
+  "physical_size": [
+    1600,
+    1000
+  ],
+  "profile": "release",
+  "results": [
+    {
+      "completed_offscreen_frame_ms": {
+        "p50": 2.598166,
+        "p95": 2.61525
+      },
+      "delta_projection_and_scene_ms": {
+        "p50": 0.137083,
+        "p95": 0.151625
+      },
+      "edges": 196,
+      "full_projection_and_scene_ms": {
+        "p50": 0.628417,
+        "p95": 0.704125
+      },
+      "gpu_pass_ms": {
+        "p50": 0.342125,
+        "p95": 0.359541
+      },
+      "gpu_prepare_ms": {
+        "p50": 0.032125,
+        "p95": 0.038959
+      },
+      "last_frame": {
+        "full_quad_bytes": 40656,
+        "geometry": {
+          "rebuilt_edges": 4,
+          "rebuilt_nodes": 1,
+          "reused_edges": 192,
+          "reused_nodes": 99
+        },
+        "glyph_upload_bytes": 0,
+        "quad_upload": {
+          "quad_bytes": 672,
+          "quad_count": 847,
+          "quad_writes": 5
+        },
+        "visible_edges": 196,
+        "visible_nodes": 100
+      },
+      "nodes": 100,
+      "samples": 30,
+      "view": "overview"
+    },
+    {
+      "completed_offscreen_frame_ms": {
+        "p50": 3.953875,
+        "p95": 4.000833
+      },
+      "delta_projection_and_scene_ms": {
+        "p50": 0.11687499999999999,
+        "p95": 0.1515
+      },
+      "edges": 196,
+      "full_projection_and_scene_ms": {
+        "p50": 0.612375,
+        "p95": 0.782667
+      },
+      "gpu_pass_ms": {
+        "p50": 0.645625,
+        "p95": 0.65875
+      },
+      "gpu_prepare_ms": {
+        "p50": 0.058417,
+        "p95": 0.085375
+      },
+      "last_frame": {
+        "full_quad_bytes": 45600,
+        "geometry": {
+          "rebuilt_edges": 4,
+          "rebuilt_nodes": 1,
+          "reused_edges": 53,
+          "reused_nodes": 26
+        },
+        "glyph_upload_bytes": 576,
+        "quad_upload": {
+          "quad_bytes": 2160,
+          "quad_count": 950,
+          "quad_writes": 5
+        },
+        "visible_edges": 57,
+        "visible_nodes": 27
+      },
+      "nodes": 100,
+      "samples": 30,
+      "view": "detail"
+    },
+    {
+      "completed_offscreen_frame_ms": {
+        "p50": 2.617,
+        "p95": 3.916542
+      },
+      "delta_projection_and_scene_ms": {
+        "p50": 0.731792,
+        "p95": 0.76375
+      },
+      "edges": 996,
+      "full_projection_and_scene_ms": {
+        "p50": 4.128083,
+        "p95": 4.318125
+      },
+      "gpu_pass_ms": {
+        "p50": 0.540541,
+        "p95": 0.553583
+      },
+      "gpu_prepare_ms": {
+        "p50": 0.039334,
+        "p95": 0.047791
+      },
+      "last_frame": {
+        "full_quad_bytes": 207696,
+        "geometry": {
+          "rebuilt_edges": 4,
+          "rebuilt_nodes": 1,
+          "reused_edges": 992,
+          "reused_nodes": 499
+        },
+        "glyph_upload_bytes": 0,
+        "quad_upload": {
+          "quad_bytes": 672,
+          "quad_count": 4327,
+          "quad_writes": 5
+        },
+        "visible_edges": 996,
+        "visible_nodes": 500
+      },
+      "nodes": 500,
+      "samples": 30,
+      "view": "overview"
+    },
+    {
+      "completed_offscreen_frame_ms": {
+        "p50": 4.0279169999999995,
+        "p95": 4.041834000000001
+      },
+      "delta_projection_and_scene_ms": {
+        "p50": 0.51925,
+        "p95": 0.531084
+      },
+      "edges": 996,
+      "full_projection_and_scene_ms": {
+        "p50": 3.7854170000000003,
+        "p95": 3.904334
+      },
+      "gpu_pass_ms": {
+        "p50": 1.156875,
+        "p95": 1.169
+      },
+      "gpu_prepare_ms": {
+        "p50": 0.08399999999999999,
+        "p95": 0.088625
+      },
+      "last_frame": {
+        "full_quad_bytes": 126672,
+        "geometry": {
+          "rebuilt_edges": 4,
+          "rebuilt_nodes": 1,
+          "reused_edges": 146,
+          "reused_nodes": 71
+        },
+        "glyph_upload_bytes": 624,
+        "quad_upload": {
+          "quad_bytes": 2160,
+          "quad_count": 2639,
+          "quad_writes": 5
+        },
+        "visible_edges": 150,
+        "visible_nodes": 72
+      },
+      "nodes": 500,
+      "samples": 30,
+      "view": "detail"
+    },
+    {
+      "completed_offscreen_frame_ms": {
+        "p50": 4.039542,
+        "p95": 4.094917
+      },
+      "delta_projection_and_scene_ms": {
+        "p50": 3.594292,
+        "p95": 3.763792
+      },
+      "edges": 3996,
+      "full_projection_and_scene_ms": {
+        "p50": 31.396041999999998,
+        "p95": 33.066125
+      },
+      "gpu_pass_ms": {
+        "p50": 1.290083,
+        "p95": 1.31875
+      },
+      "gpu_prepare_ms": {
+        "p50": 0.111,
+        "p95": 0.142625
+      },
+      "last_frame": {
+        "full_quad_bytes": 833424,
+        "geometry": {
+          "rebuilt_edges": 4,
+          "rebuilt_nodes": 1,
+          "reused_edges": 3992,
+          "reused_nodes": 1999
+        },
+        "glyph_upload_bytes": 0,
+        "quad_upload": {
+          "quad_bytes": 1536,
+          "quad_count": 17363,
+          "quad_writes": 5
+        },
+        "visible_edges": 3996,
+        "visible_nodes": 2000
+      },
+      "nodes": 2000,
+      "samples": 30,
+      "view": "overview"
+    },
+    {
+      "completed_offscreen_frame_ms": {
+        "p50": 4.081084,
+        "p95": 4.125792
+      },
+      "delta_projection_and_scene_ms": {
+        "p50": 2.089833,
+        "p95": 2.1119160000000003
+      },
+      "edges": 3996,
+      "full_projection_and_scene_ms": {
+        "p50": 28.724125,
+        "p95": 30.309917
+      },
+      "gpu_pass_ms": {
+        "p50": 0.999833,
+        "p95": 1.014333
+      },
+      "gpu_prepare_ms": {
+        "p50": 0.098375,
+        "p95": 0.113417
+      },
+      "last_frame": {
+        "full_quad_bytes": 101424,
+        "geometry": {
+          "rebuilt_edges": 4,
+          "rebuilt_nodes": 1,
+          "reused_edges": 109,
+          "reused_nodes": 55
+        },
+        "glyph_upload_bytes": 672,
+        "quad_upload": {
+          "quad_bytes": 3600,
+          "quad_count": 2113,
+          "quad_writes": 5
+        },
+        "visible_edges": 113,
+        "visible_nodes": 56
+      },
+      "nodes": 2000,
+      "samples": 30,
+      "view": "detail"
+    }
+  ],
+  "warmup_frames": 5,
+  "measured_date": "2026-11-09",
+  "os": "macOS 27.2 (26B123)"
+}
