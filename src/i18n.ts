@@ -70,7 +70,7 @@ const en = {
   rtlMatch: "RTL / Rust",
   rtlContract: "Contract",
   rtlInfo:
-    "Runs generated RTL in Icarus against Rust and the same 320-vector ALU contract. Sampled tests, not formal proof. Artifacts are saved in .logic/runs.",
+    "Runs generated RTL in the selected simulator against Rust and the same 320-vector ALU contract. Sampled tests, not formal proof. Artifacts are saved in .logic/runs.",
   noRtl: "Connect every input to generate RTL.",
   copy: "Copy",
   copied: "Copied",
@@ -193,7 +193,7 @@ const ja: Dictionary = {
   rtlMatch: "RTL / Rust",
   rtlContract: "期待値",
   rtlInfo:
-    "生成RTLをIcarusで実行し、Rustと同じ320ベクトルのALU期待値に照合します。形式証明ではありません。実行データは .logic/runs に保存します。",
+    "生成RTLを選択したシミュレーターで実行し、Rustと同じ320ベクトルのALU期待値に照合します。形式証明ではありません。実行データは .logic/runs に保存します。",
   noRtl: "全ての入力を接続するとRTLを生成できます。",
   copy: "コピー",
   copied: "コピーしました",
@@ -313,7 +313,7 @@ const zh: Dictionary = {
   rtlMatch: "RTL / Rust",
   rtlContract: "预期值",
   rtlInfo:
-    "在Icarus中运行生成的RTL，与Rust及相同的320组ALU预期值比较。这是采样测试，不是形式证明。运行文件保存在 .logic/runs。",
+    "在所选模拟器中运行生成的RTL，与Rust及相同的320组ALU预期值比较。这是采样测试，不是形式证明。运行文件保存在 .logic/runs。",
   noRtl: "连接所有输入后即可生成 RTL。",
   copy: "复制",
   copied: "已复制",

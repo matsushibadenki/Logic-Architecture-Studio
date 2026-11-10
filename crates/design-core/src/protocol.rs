@@ -120,8 +120,8 @@ pub fn tools() -> Vec<Value> {
         ),
         (
             "verify.rtl",
-            "Compare generated RTL with Rust and the vector contract using Icarus; sampled tests, not formal proof",
-            json!({"expected_revision":revision,"vectors":vectors}),
+            "Compare generated RTL with Rust and the vector contract using Icarus or Verilator; sampled tests, not formal proof",
+            json!({"expected_revision":revision,"vectors":vectors,"engine":{"enum":["icarus","verilator"]}}),
             vec!["expected_revision"],
         ),
         (

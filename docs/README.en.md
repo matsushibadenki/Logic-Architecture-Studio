@@ -8,7 +8,7 @@ Implemented: 1–64-bit combinational circuit editing, atomic patches, revision 
 
 The default ALU contract is `op=0: ADD`, `1: AND`, `2/3: XOR`. The built-in experiment intentionally mutates ADD→SUB and XOR→OR to demonstrate rejection of incorrect candidates. This is behavioral testing, not formal verification or measured architecture optimization.
 
-Yosys is detected and invoked only when installed. No cell area, delay or power figures are invented. Internal LLM orchestration, MCP client, Verilator, formal tools, OpenROAD and fabrication flows are unfinished.
+Yosys is detected and invoked only when installed. No cell area, delay or power figures are invented. Internal LLM orchestration, MCP client, formal tools, OpenROAD and fabrication flows are unfinished.
 
 See [roadmap](../ROADMAP.md), [architecture](ARCHITECTURE.md), [MCP setup](MCP.md), and [UNGE attribution](../THIRD_PARTY_NOTICES.md). Run `npm run build`, `cargo test --workspace --locked`, and `cargo clippy --workspace --all-targets --locked -- -D warnings`. GPU and socket integration tests are explicitly marked ignored and can be selected with `-- --ignored`.
 
@@ -22,4 +22,4 @@ Startup recovery previews valid current/previous checkpoints or resets only dama
 
 The macOS folder button opens another workspace and remembers the selection. Missing remembered folders open a selection screen rather than creating replacement data. See [workspace selection](WORKSPACES.md).
 
-Generated RTL can be tested in Icarus against Rust and an independent vector contract, from Toolchain or MCP `verify.rtl`. See [RTL verification](RTL-VERIFICATION.md).
+Generated RTL can be tested in Icarus or Verilator against Rust and an independent vector contract, from Toolchain or MCP `verify.rtl`. See [RTL verification](RTL-VERIFICATION.md).

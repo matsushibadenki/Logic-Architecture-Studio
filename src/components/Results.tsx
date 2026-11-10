@@ -12,6 +12,7 @@ import { translation } from "../i18n";
 import type { Snapshot } from "../types";
 import { Hint, IconButton } from "./ui";
 type RtlResult = {
+  backend: "icarus" | "verilator";
   revision: number;
   total: number;
   rtl_passed: number;
@@ -165,20 +166,23 @@ export function Results({
               />
               <code>{tool.name}</code>
               <span>{t(tool.installed ? "installed" : "missing")}</span>
-              {tool.name === "iverilog" ? (
+              {["iverilog", "verilator"].includes(tool.name) ? (
                 <IconButton
-                  label={t("verifyRtl")}
+                  label={`${tool.name} · ${t("verifyRtl")}`}
                   icon={Play}
                   disabled={
                     !tool.installed ||
-                    !tools.some(
-                      (tool) => tool.name === "vvp" && tool.installed,
-                    ) ||
+                    (tool.name === "iverilog" &&
+                      !tools.some(
+                        (entry) => entry.name === "vvp" && entry.installed,
+                      )) ||
                     busy
                   }
                   onClick={() => {
                     void action<RtlResult>("verify.rtl", {
                       expected_revision: snapshot.revision,
+                      engine:
+                        tool.name === "verilator" ? "verilator" : "icarus",
                     }).then((result) => {
                       if (result) setRtl(result);
                     });
@@ -208,7 +212,10 @@ export function Results({
                   <AlertCircle size={16} />
                 )}
                 <strong>{t(rtl.success ? "passed" : "failed")}</strong>
-                <code>r{rtl.revision}</code>
+                <code>
+                  {rtl.backend === "verilator" ? "Verilator" : "Icarus"} · r
+                  {rtl.revision}
+                </code>
                 {rtl.revision !== snapshot.revision && (
                   <span className="stale">{t("stale")}</span>
                 )}

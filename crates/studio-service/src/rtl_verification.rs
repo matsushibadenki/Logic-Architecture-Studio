@@ -188,14 +188,42 @@ fn compare(
     }
     Ok((passed, failures))
 }
+#[derive(Clone, Copy)]
+enum Engine {
+    Icarus,
+    Verilator,
+}
+impl Engine {
+    fn id(self) -> &'static str {
+        match self {
+            Self::Icarus => "icarus",
+            Self::Verilator => "verilator",
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Self::Icarus => "Icarus Verilog",
+            Self::Verilator => "Verilator",
+        }
+    }
+}
+pub fn run_verilator(
+    root: &Path,
+    revision: u64,
+    doc: &Document,
+    vectors: &[TestVector],
+) -> Result<Value, String> {
+    run_engine_source(root, revision, doc, vectors, &doc.rtl()?, Engine::Verilator)
+}
 pub fn run(
     root: &Path,
     revision: u64,
     doc: &Document,
     vectors: &[TestVector],
 ) -> Result<Value, String> {
-    run_source(root, revision, doc, vectors, &doc.rtl()?)
+    run_engine_source(root, revision, doc, vectors, &doc.rtl()?, Engine::Icarus)
 }
+#[cfg(test)]
 fn run_source(
     root: &Path,
     revision: u64,
@@ -203,16 +231,36 @@ fn run_source(
     vectors: &[TestVector],
     source: &str,
 ) -> Result<Value, String> {
+    run_engine_source(root, revision, doc, vectors, source, Engine::Icarus)
+}
+fn run_engine_source(
+    root: &Path,
+    revision: u64,
+    doc: &Document,
+    vectors: &[TestVector],
+    source: &str,
+    engine: Engine,
+) -> Result<Value, String> {
     let contract = design_core::verify(doc, revision, vectors)?;
     let (bench, reference) = testbench(doc, vectors)?;
-    let compiler = super::executable("iverilog").ok_or("Icarus Verilog is not installed")?;
-    let runtime = super::executable("vvp").ok_or("Icarus vvp runtime is not installed")?;
+    let compiler = super::executable(match engine {
+        Engine::Icarus => "iverilog",
+        Engine::Verilator => "verilator",
+    })
+    .ok_or_else(|| format!("{} is not installed", engine.label()))?;
+    let runtime = match engine {
+        Engine::Icarus => {
+            Some(super::executable("vvp").ok_or("Icarus vvp runtime is not installed")?)
+        }
+        Engine::Verilator => None,
+    };
     let run = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_nanos();
-    let dir = root.join(format!(".logic/runs/rtl-{revision}-{run}"));
+    let dir = root.join(format!(".logic/runs/rtl-{}-{revision}-{run}", engine.id()));
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let dir = dir.canonicalize().map_err(|e| e.to_string())?;
     fs::write(dir.join("design.v"), source).map_err(|e| e.to_string())?;
     fs::write(dir.join("testbench.v"), bench).map_err(|e| e.to_string())?;
     fs::write(
@@ -226,11 +274,10 @@ fn run_source(
     )
     .map_err(|e| e.to_string())?;
     let deadline = Instant::now() + Duration::from_secs(30);
-    let mut result = json!({"revision":revision,"engine":"Icarus Verilog / Rust · sampled vectors (not formal proof)","success":false,"stage":"compile","total":vectors.len(),"rtl_passed":0,"contract_passed":contract.passed,"failures":contract.failures,"artifact_directory":dir});
+    let mut result = json!({"revision":revision,"backend":engine.id(),"engine":format!("{} / Rust · sampled vectors (not formal proof)",engine.label()),"success":false,"stage":"compile","total":vectors.len(),"rtl_passed":0,"contract_passed":contract.passed,"failures":contract.failures,"artifact_directory":dir});
     let outcome = (|| -> Result<(), String> {
-        if !execute(
-            &compiler,
-            &[
+        let arguments: &[&str] = match engine {
+            Engine::Icarus => &[
                 "-g2012",
                 "-s",
                 "__las_verification_tb",
@@ -239,20 +286,33 @@ fn run_source(
                 "design.v",
                 "testbench.v",
             ],
-            &dir,
-            "compile.log",
-            deadline,
-        )? {
+            Engine::Verilator => &[
+                "--binary",
+                "--timing",
+                "--top-module",
+                "__las_verification_tb",
+                "--Mdir",
+                "obj_dir",
+                "-o",
+                "las_sim",
+                "--build-jobs",
+                "2",
+                "-Wno-fatal",
+                "design.v",
+                "testbench.v",
+            ],
+        };
+        if !execute(&compiler, arguments, &dir, "compile.log", deadline)? {
             return Err("RTL compilation failed".into());
         }
         result["stage"] = json!("simulation");
-        if !execute(
-            &runtime,
-            &["-n", "simulation.vvp"],
-            &dir,
-            "simulation.log",
-            deadline,
-        )? {
+        let runtime = runtime.unwrap_or_else(|| dir.join("obj_dir/las_sim"));
+        let runtime = runtime.canonicalize().map_err(|e| e.to_string())?;
+        let args: &[&str] = match engine {
+            Engine::Icarus => &["-n", "simulation.vvp"],
+            Engine::Verilator => &[],
+        };
+        if !execute(&runtime, args, &dir, "simulation.log", deadline)? {
             return Err("RTL simulation failed".into());
         }
         let outputs: Vec<_> = doc
@@ -407,6 +467,87 @@ mod tests {
         assert!(service.execute(request(999)).is_err());
         assert_eq!(service.execute(request(0)).unwrap()["success"], true);
         assert_eq!(*service.state.lock().unwrap(), before);
+    }
+    #[test]
+    #[ignore = "Requires Verilator, Icarus, C++ compiler and child processes"]
+    fn real_verilator_differential_regression_and_failures() {
+        let root = Root::new("verilator");
+        for width in [1, 8, 32, 64] {
+            let mut doc = Document::demo();
+            for node in doc.nodes.iter_mut() {
+                if node.id != "op" {
+                    node.width = width;
+                }
+            }
+            for alternate in [false, true] {
+                if alternate {
+                    for (id, kind) in [
+                        ("add", Kind::Sub),
+                        ("bit_and", Kind::Or),
+                        ("bit_xor", Kind::Not),
+                    ] {
+                        doc.nodes.iter_mut().find(|n| n.id == id).unwrap().kind = kind;
+                    }
+                    doc.edges.retain(|e| e.id != "b_bit_xor");
+                }
+                let mut vectors = design_core::alu_vectors(&doc).unwrap();
+                if alternate {
+                    for vector in &mut vectors {
+                        let inputs = vector
+                            .inputs
+                            .iter()
+                            .map(|(k, v)| (k.clone(), design_core::number(v).unwrap()))
+                            .collect();
+                        vector.expected = doc
+                            .evaluate(&inputs)
+                            .unwrap()
+                            .into_iter()
+                            .map(|(k, v)| (k, v.to_string()))
+                            .collect();
+                    }
+                }
+                let icarus = run(&root.0, 0, &doc, &vectors).unwrap();
+                let verilator = run_verilator(&root.0, 0, &doc, &vectors).unwrap();
+                assert_eq!(
+                    verilator["success"], true,
+                    "width {width}, alternate {alternate}: {verilator}"
+                );
+                assert_eq!(verilator["rtl_passed"], icarus["rtl_passed"]);
+                assert_eq!(verilator["contract_passed"], icarus["contract_passed"]);
+                assert_eq!(verilator["backend"], "verilator");
+            }
+        }
+        let mut doc = Document::demo();
+        doc.name = "tb".into();
+        let vectors = design_core::alu_vectors(&doc).unwrap();
+        let bad = doc.rtl().unwrap().replace("n_a + n_b", "n_a - n_b");
+        let result =
+            run_engine_source(&root.0, 0, &doc, &vectors, &bad, Engine::Verilator).unwrap();
+        assert_eq!(result["success"], false);
+        assert_eq!(result["stage"], "complete");
+        assert!(result["rtl_passed"].as_u64().unwrap() < 320);
+        assert_eq!(result["contract_passed"], 320);
+        let result = run_engine_source(
+            &root.0,
+            0,
+            &doc,
+            &vectors,
+            "invalid Verilog",
+            Engine::Verilator,
+        )
+        .unwrap();
+        assert_eq!(result["success"], false);
+        assert_eq!(result["stage"], "compile");
+        let service = crate::Service::open(&root.0).unwrap();
+        let result = service
+            .execute(crate::Request {
+                method: "verify.rtl".into(),
+                args: json!({"expected_revision":0,"engine":"verilator"}),
+                actor: "test".into(),
+            })
+            .unwrap();
+        assert_eq!(result["success"], true, "{result}");
+        assert_eq!(service.state.lock().unwrap().revision, 0);
     }
     #[cfg(unix)]
     #[test]

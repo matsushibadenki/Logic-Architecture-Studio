@@ -145,7 +145,13 @@ impl Service {
             } else {
                 serde_json::from_value(req.args["vectors"].clone()).map_err(|e| e.to_string())?
             };
-            return rtl_verification::run(&self.root, revision, &document, &vectors);
+            return match req.args["engine"].as_str().unwrap_or("icarus") {
+                "icarus" => rtl_verification::run(&self.root, revision, &document, &vectors),
+                "verilator" => {
+                    rtl_verification::run_verilator(&self.root, revision, &document, &vectors)
+                }
+                _ => Err("Unsupported RTL engine".into()),
+            };
         }
         if req.method == "synthesis.run" {
             let (revision, source) = {

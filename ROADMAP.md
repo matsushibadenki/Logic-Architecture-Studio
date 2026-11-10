@@ -68,7 +68,8 @@
 - 🟢 [Done] Yosys detection and fixed-script synthesis adapter, run artifacts and timeout.
 - ⭕️ [Pending] Real Yosys synthesis execution; tool not installed in this environment.
 - 🟢 [Done] Icarus generated-RTL sampled comparison against Rust and independent contracts, revision guards, bounded execution/artifacts, GUI/MCP entry point and 1/8/32/64-bit real-tool tests; see docs/RTL-VERIFICATION.md.
-- 🟠 [Next] Verilator adapter and broader generated-RTL differential regression coverage.
+- 🟢 [Done] Verilator adapter with explicit GUI/MCP engine selection, shared validation/result protocol and 1/8/32/64-bit differential regression against Icarus; real tool and macOS UI checks in docs/RTL-VERIFICATION.md.
+- 🟠 [Next] Seeded generated-circuit differential regression, multiple-output and irregular-width coverage.
 - 🟠 [Next] Formal verification, sequential state, clock/reset and waveform traces.
 - 🔴 [Later] PDK-specific mapping, STA, cell area/power and physical evaluation.
 

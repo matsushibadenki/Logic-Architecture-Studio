@@ -8,7 +8,7 @@
 
 默认 ALU 规范：`op=0: ADD`、`1: AND`、`2/3: XOR`。内置实验有意引入 ADD→SUB 和 XOR→OR 变异，以验证测试能够拒绝错误候选。这是行为测试，不是形式证明或实测架构优化。
 
-仅在检测到已安装 Yosys 时调用综合。不会虚构面积、延迟或功耗。内置 LLM、MCP 客户端、Verilator、形式验证、OpenROAD 和制造流程尚未实现。
+仅在检测到已安装 Yosys 时调用综合。不会虚构面积、延迟或功耗。内置 LLM、MCP 客户端、形式验证、OpenROAD 和制造流程尚未实现。
 
 请参阅[路线图](../ROADMAP.md)、[架构](ARCHITECTURE.md)、[MCP 配置](MCP.md)和[UNGE 许可声明](../THIRD_PARTY_NOTICES.md)。构建和测试命令见主 README。GPU 与 socket 集成测试需要显式添加 `-- --ignored`。
 
@@ -22,4 +22,4 @@
 
 macOS 文件夹按钮可切换工作区并记住选择。记住的文件夹不存在时会显示选择界面，不会创建替代数据。参见[工作区选择](WORKSPACES.md)。
 
-可通过工具链面板或MCP `verify.rtl`，在Icarus中运行生成的RTL，并与Rust及独立预期值比较。详见 [RTL验证](RTL-VERIFICATION.md)。
+可通过工具链面板或MCP `verify.rtl`，在Icarus或Verilator中运行生成的RTL，并与Rust及独立预期值比较。详见 [RTL验证](RTL-VERIFICATION.md)。
