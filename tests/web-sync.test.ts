@@ -150,3 +150,14 @@ test(
     }
   },
 );
+
+test("appearance changes share the circuit and history", () => {
+  const result = apply([
+    { set: { locale: "ja", node_colors: { add: "#ff5533" } } },
+  ]);
+  assert.equal(result.locale, "ja");
+  assert.equal(result.node_colors?.add, "#ff5533");
+  assert.equal(result.document, initial.document);
+  assert.equal(result.history, initial.history);
+  assert.equal(result.revision, initial.revision);
+});

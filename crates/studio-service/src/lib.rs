@@ -3,6 +3,7 @@ pub mod native_sync;
 mod persistence;
 pub mod recovery;
 mod rtl_verification;
+mod simulation;
 use design_core::Workspace;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -61,6 +62,7 @@ pub struct Service {
     root: PathBuf,
     _lock: Arc<File>,
     rtl_job: Arc<Mutex<()>>,
+    simulation: Arc<Mutex<simulation::Session>>,
 }
 impl Service {
     pub fn open(root: &Path) -> Result<Self, String> {
@@ -89,6 +91,7 @@ impl Service {
                     .as_nanos()
             )))),
             rtl_job: Arc::new(Mutex::new(())),
+            simulation: Arc::new(Mutex::new(simulation::Session::default())),
             root: root.into(),
             _lock: Arc::new(lock),
         })
@@ -107,6 +110,7 @@ impl Service {
                 "project.import",
                 "layout.auto_arrange",
                 "view.focus_module",
+                "view.select_nodes",
                 "view.preferences",
             ]
             .contains(&method.as_str())
@@ -128,7 +132,7 @@ impl Service {
         if req.method == "tools.status" {
             return Ok(tool_status());
         }
-        if req.method == "verify.rtl" {
+        if matches!(req.method.as_str(), "verify.rtl" | "verify.formal") {
             let _job = self
                 .rtl_job
                 .try_lock()
@@ -140,6 +144,9 @@ impl Service {
                 }
                 (state.revision, state.document.clone())
             };
+            if req.method == "verify.formal" {
+                return rtl_verification::prove_alu(&self.root, revision, &document);
+            }
             let vectors = if req.args["vectors"].is_null() {
                 design_core::alu_vectors(&document)?
             } else {
@@ -161,6 +168,13 @@ impl Service {
             return synthesis(&self.root, revision, &source);
         }
         let mut state = self.state.lock().map_err(|e| e.to_string())?;
+        if req.method.starts_with("simulation.") {
+            return self.simulation.lock().map_err(|e| e.to_string())?.execute(
+                &state,
+                &req.method,
+                &req.args,
+            );
+        }
         if req.method == "project.sync" {
             let journal = self.sync.lock().map_err(|e| e.to_string())?;
             let epoch = &journal.epoch;
@@ -180,8 +194,8 @@ impl Service {
                 }
             }
             let snapshot = if req.args["scope"] == "native" || req.args["scope"] == "native_delta" {
-                let mut snapshot = json!({"revision":state.revision,"selected":state.selected,
-                    "locale":state.locale,"panels":state.panels});
+                let mut snapshot = json!({"revision":state.revision,"selected":state.selected,"selection":state.selected_nodes(),
+                    "locale":state.locale,"node_colors":state.node_colors,"panels":state.panels});
                 // A service restart invalidates the document cache even when
                 // the persisted revision happens to match the client's value.
                 let same_session = req.args["cursor"]
@@ -219,6 +233,7 @@ impl Service {
             "design.get_ir",
             "rtl.generate",
             "simulation.evaluate",
+            "simulation.cycles",
             "design.propose_patch",
             "revision.diff",
             "experiment.compare",
@@ -438,6 +453,10 @@ pub fn mcp_message(
                     "design.propose_patch",
                     "rtl.generate",
                     "simulation.evaluate",
+                    "simulation.cycles",
+                    "simulation.vcd",
+                    "simulation.state",
+                    "simulation.select",
                     "revision.diff",
                     "experiment.compare",
                     "experiment.get_status",
@@ -501,6 +520,39 @@ pub fn mcp_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn appearance_persists_and_syncs_without_document_delta() {
+        let root = std::env::temp_dir().join(format!("las-appearance-{}", std::process::id()));
+        let request = |method: &str, args| Request {
+            method: method.into(),
+            args,
+            actor: "gui".into(),
+        };
+        let service = Service::open(&root).unwrap();
+        let web = service
+            .execute(request("project.sync", json!({"scope":"web"})))
+            .unwrap();
+        service.execute(request("view.command", json!({"method":"view.preferences","args":{"locale":"ja","node_colors":{"add":"#123456"}}}))).unwrap();
+        let delta = service
+            .execute(request(
+                "project.sync",
+                json!({"scope":"web","cursor":web["cursor"]}),
+            ))
+            .unwrap();
+        assert_eq!(delta["deltas"][0]["set"]["node_colors"]["add"], "#123456");
+        assert!(delta["deltas"][0].get("document").is_none());
+        drop(service);
+        let reopened = Service::open(&root).unwrap();
+        let state = reopened
+            .execute(request("project.inspect", json!({})))
+            .unwrap();
+        assert_eq!(state["node_colors"]["add"], "#123456");
+        assert_eq!(state["locale"], "ja");
+        assert_eq!(state["revision"], 0);
+        drop(reopened);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn view_mutations_return_small_ack_and_publish_delta() {
         let root = std::env::temp_dir().join(format!("las-view-{}", std::process::id()));

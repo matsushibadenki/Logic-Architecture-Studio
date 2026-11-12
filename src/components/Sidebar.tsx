@@ -1,3 +1,4 @@
+import { nodeColor } from "../appearance";
 import { memo, useState } from "react";
 import { Search, ChevronDown, Cpu, Plus } from "lucide-react";
 import { patch, select } from "../store";
@@ -9,19 +10,23 @@ const HierarchyRow = memo(function HierarchyRow({
   kind,
   width,
   selected,
+  color,
 }: {
   id: string;
   name: string;
   kind: import("../types").Kind;
   width: number;
   selected: boolean;
+  color: string;
 }) {
   return (
     <button
       className={selected ? "selected" : ""}
       onClick={() => void select(id)}
     >
-      <span className="node-icon">{symbols[kind]}</span>
+      <span className="node-icon" style={{ color }}>
+        {symbols[kind]}
+      </span>
       <span>{name}</span>
       <small>{width}</small>
     </button>
@@ -62,6 +67,7 @@ export function Hierarchy({ snapshot }: { snapshot: Snapshot }) {
               name={n.name}
               kind={n.kind}
               width={n.width}
+              color={nodeColor(snapshot, n.kind)}
               selected={snapshot.selected === n.id}
             />
           ))}
@@ -80,16 +86,30 @@ export function Library({ snapshot }: { snapshot: Snapshot }) {
       {kinds.map((kind) => (
         <button
           key={kind}
-          title={`${t("newNode")}: ${kind}`}
+          title={`${t("newNode")}: ${kind === "register" ? t("registerKind") : kind}`}
           onClick={() => {
-            const id = `n_${Date.now().toString(36)}`;
+            const id = `n_${crypto.randomUUID().replaceAll("-", "")}`;
+            const prefix =
+              kind === "input"
+                ? "in"
+                : kind === "output"
+                  ? "out"
+                  : kind === "register"
+                    ? "reg"
+                    : kind;
+            const used = new Set(
+              snapshot.document.nodes.map((node) => node.name),
+            );
+            let index = 0;
+            while (used.has(`${prefix}${index}`)) index += 1;
+            const name = `${prefix}${index}`;
             void patch(
               [
                 {
                   op: "add_node",
                   node: {
                     id,
-                    name: id,
+                    name,
                     kind,
                     width: 32,
                     x: 200 + (snapshot.document.nodes.length % 4) * 60,
@@ -101,13 +121,20 @@ export function Library({ snapshot }: { snapshot: Snapshot }) {
             );
           }}
         >
-          <span className="library-symbol">{symbols[kind]}</span>
+          <span
+            className="library-symbol"
+            style={{ color: nodeColor(snapshot, kind) }}
+          >
+            {symbols[kind]}
+          </span>
           <span>
             {kind === "input"
               ? t("inputs")
               : kind === "output"
                 ? t("outputs")
-                : kind.toUpperCase()}
+                : kind === "register"
+                  ? t("registerKind")
+                  : kind.toUpperCase()}
           </span>
           <Plus size={13} />
         </button>

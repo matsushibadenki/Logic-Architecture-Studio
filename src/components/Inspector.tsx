@@ -1,8 +1,10 @@
+import type { CSSProperties } from "react";
+import { nodeColor } from "../appearance";
 import { Trash2, Unplug, Box } from "lucide-react";
 import { patch } from "../store";
 import { ports, kinds, symbols, type Snapshot } from "../types";
 import { translation } from "../i18n";
-import { IconButton } from "./ui";
+import { Hint, IconButton } from "./ui";
 export function Inspector({ snapshot }: { snapshot: Snapshot }) {
   const t = translation(snapshot.locale);
   const node = snapshot.document.nodes.find((n) => n.id === snapshot.selected);
@@ -17,6 +19,9 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
   return (
     <div
       className="inspector-content"
+      style={
+        { "--inspector-tone": nodeColor(snapshot, node.kind) } as CSSProperties
+      }
       key={`${node.id}-${node.name}-${node.kind}-${node.width}`}
     >
       <div className="node-heading">
@@ -37,6 +42,14 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
             )
           }
         />
+      </div>
+      <div className="numeric-semantics">
+        <strong>{t("numericSemantics")}</strong>
+        <Hint text={t("simulationSemantics")} />
+        {["add", "sub"].includes(node.kind) && (
+          <small>{t("wrapSemantics")}</small>
+        )}
+        {node.kind === "register" && <small>{t("resetSemantics")}</small>}
       </div>
       <div className="fields">
         <label>
@@ -73,7 +86,7 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
           >
             {kinds.map((k) => (
               <option key={k} value={k}>
-                {k.toUpperCase()}
+                {k === "register" ? t("registerKind") : k.toUpperCase()}
               </option>
             ))}
           </select>

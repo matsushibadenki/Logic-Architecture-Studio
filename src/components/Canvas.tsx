@@ -1,4 +1,6 @@
-import { useRef, useState } from "react";
+import { nodeColor } from "../appearance";
+import type { CSSProperties } from "react";
+import { useRef, useState, useLayoutEffect } from "react";
 import {
   MousePointer2,
   Waypoints,
@@ -8,7 +10,7 @@ import {
   Network,
   Info,
 } from "lucide-react";
-import { patch, action, select } from "../store";
+import { patch, action, selectNodes } from "../store";
 import { translation } from "../i18n";
 import { ports, symbols, type Snapshot, type Node } from "../types";
 import {
@@ -18,32 +20,100 @@ import {
   tone,
   caption,
   cablePath,
+  gridSpacing,
+  snapToGrid,
 } from "../nodeAppearance";
 import { Hint, IconButton } from "./ui";
+import { useSimulation } from "../simulation";
 export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
+  const trace = useSimulation();
+  const annotation =
+    trace?.revision === snapshot.revision ? trace.annotation : null;
   const t = translation(snapshot.locale),
     svg = useRef<SVGSVGElement>(null);
   const [mode, setMode] = useState<"select" | "connect">("select");
   const [source, setSource] = useState<string | null>(null);
   const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
   const [camera, setCamera] = useState({ x: -10, y: -20, w: 1160, h: 740 });
-  const [drag, setDrag] = useState<{ id: string; x: number; y: number } | null>(
+  const selectedIds =
+    snapshot.selection ?? (snapshot.selected ? [snapshot.selected] : []);
+  const [previewSelection, setPreviewSelection] = useState<string[] | null>(
     null,
   );
+  const selection = previewSelection ?? selectedIds;
+  const [drag, setDrag] = useState<{
+    ids: string[];
+    revision: number;
+    dx: number;
+    dy: number;
+  } | null>(null);
+  const [marquee, setMarquee] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
   const gesture = useRef<{
     id: string | null;
     x: number;
     y: number;
-    nx: number;
-    ny: number;
     moved: boolean;
-    camera: typeof camera;
+    pan: boolean;
+    ids: string[];
+    original: string[];
+    additive: boolean;
+    toggleOff: boolean;
+    revision: number;
+    anchor: { x: number; y: number };
+    spacing: number;
   } | null>(null);
   const pos = (n: Node) =>
-    drag?.id === n.id ? { ...n, x: drag.x, y: drag.y } : n;
+    drag?.revision === snapshot.revision && drag.ids.includes(n.id)
+      ? { ...n, x: n.x + drag.dx, y: n.y + drag.dy }
+      : n;
   const nodes = snapshot.document.nodes.map(pos);
+  function cancelGesture() {
+    gesture.current = null;
+    setDrag(null);
+    setMarquee(null);
+    setPreviewSelection(null);
+  }
+  function labelY(n: Node, index: number, output = false) {
+    const anchor = portY(n, index, output),
+      center = nodeHeight(n.kind) / 2;
+    const top = !annotation
+      ? anchor - 15
+      : anchor <= center
+        ? Math.min(anchor - 15, center - 43)
+        : Math.max(anchor - 15, center + 24);
+    return top + 23;
+  }
   const sourceNode = nodes.find((n) => n.id === source);
   const detailed = camera.w < 2000;
+  const [canvasSize, setCanvasSize] = useState({ width: 1160, height: 740 });
+  useLayoutEffect(() => {
+    const element = svg.current;
+    if (!element) return;
+    const update = () =>
+      setCanvasSize({
+        width: element.clientWidth,
+        height: element.clientHeight,
+      });
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  const scale = Math.min(
+    canvasSize.width / camera.w,
+    canvasSize.height / camera.h,
+  );
+  const spacing = gridSpacing(scale);
+  const tiny = scale < 0.35;
+  const safeScale = Math.max(scale, 0.02);
+  const wireWidth = (bus: boolean) => Math.max(bus ? 4.5 : 2.5, 1 / safeScale);
+  const portRadius = Math.max(6, (tiny ? 1.5 : 2.5) / safeScale);
+  const portRim = Math.max(1.5, 1 / safeScale);
   function point(clientX: number, clientY: number) {
     return new DOMPoint(clientX, clientY).matrixTransform(
       svg.current!.getScreenCTM()!.inverse(),
@@ -65,19 +135,40 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
     });
   }
   function start(e: React.PointerEvent, id: string | null) {
-    if (e.button !== 0 || mode !== "select") return;
+    if (![0, 1, 2].includes(e.button) || (mode !== "select" && e.button === 0))
+      return;
     e.stopPropagation();
     const p = point(e.clientX, e.clientY);
-    const n = nodes.find((n) => n.id === id);
+    const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+    const pan = e.button !== 0;
+    const toggleOff = !!id && additive && selectedIds.includes(id);
+    const ids = pan
+      ? selectedIds
+      : id
+        ? toggleOff
+          ? selectedIds.filter((i) => i !== id)
+          : additive || selectedIds.includes(id)
+            ? [...new Set([...selectedIds, id])]
+            : [id]
+        : additive
+          ? selectedIds
+          : [];
+    if (ids.length > 512) return;
     gesture.current = {
       id,
       x: p.x,
       y: p.y,
-      nx: n?.x ?? camera.x,
-      ny: n?.y ?? camera.y,
       moved: false,
-      camera: { ...camera },
+      pan,
+      ids,
+      original: selectedIds,
+      additive,
+      toggleOff,
+      revision: snapshot.revision,
+      anchor: nodes.find((n) => n.id === id) ?? { x: 0, y: 0 },
+      spacing: spacing,
     };
+    if (!pan) setPreviewSelection(ids);
     e.currentTarget.setPointerCapture(e.pointerId);
   }
   async function portClick(id: string, port?: string) {
@@ -148,6 +239,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
           onClick={() => zoom(1 / 1.2)}
         />
         <span className="toolbar-spacer" />
+        <Hint text={t("multiSelectHint")} />
         <Hint text={t("connectHint")} />
       </div>
       <div className="canvas-breadcrumb">
@@ -160,67 +252,130 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
       </div>
       <svg
         ref={svg}
-        className={`circuit rich-circuit ${mode} ${detailed ? "" : "overview"}`}
+        className={`circuit rich-circuit ${mode} ${detailed ? "" : "overview"} ${tiny ? "tiny" : ""}`}
+        style={
+          {
+            "--port-rim": portRim,
+            "--preview-width": wireWidth(false),
+          } as CSSProperties
+        }
         viewBox={`${camera.x} ${camera.y} ${camera.w} ${camera.h}`}
         aria-label={t("architecture")}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
+            cancelGesture();
             setSource(null);
             setPointer(null);
             setMode("select");
           }
         }}
+        onContextMenu={(e) => e.preventDefault()}
         onPointerDown={(e) => start(e, null)}
         onPointerMove={(e) => {
           const p = point(e.clientX, e.clientY);
           if (source) setPointer({ x: p.x, y: p.y });
           const g = gesture.current;
           if (!g) return;
-          let dx = p.x - g.x,
+          const dx = p.x - g.x,
             dy = p.y - g.y;
-          if (Math.abs(dx) + Math.abs(dy) > 3) g.moved = true;
-          if (g.id) setDrag({ id: g.id, x: g.nx + dx, y: g.ny + dy });
-          else {
-            dx =
-              ((e.movementX || 0) * camera.w) / (svg.current?.clientWidth || 1);
-            dy =
-              ((e.movementY || 0) * camera.h) /
-              (svg.current?.clientHeight || 1);
-            setCamera((c) => ({ ...c, x: c.x - dx, y: c.y - dy }));
+          g.moved = Math.hypot(dx, dy) * scale >= 3;
+          if (g.pan) {
+            setCamera((c) => ({
+              ...c,
+              x:
+                c.x -
+                (e.movementX * camera.w) / (svg.current?.clientWidth || 1),
+              y:
+                c.y -
+                (e.movementY * camera.h) / (svg.current?.clientHeight || 1),
+            }));
+          } else if (g.id && !g.toggleOff) {
+            setDrag(
+              g.moved
+                ? {
+                    ids: g.ids,
+                    revision: g.revision,
+                    dx: snapToGrid(g.anchor.x + dx, g.spacing) - g.anchor.x,
+                    dy: snapToGrid(g.anchor.y + dy, g.spacing) - g.anchor.y,
+                  }
+                : null,
+            );
+          } else if (!g.id) {
+            const box = {
+              x: Math.min(g.x, p.x),
+              y: Math.min(g.y, p.y),
+              width: Math.abs(dx),
+              height: Math.abs(dy),
+            };
+            setMarquee(box);
+            const inside = snapshot.document.nodes
+              .filter(
+                (n) =>
+                  n.x <= box.x + box.width &&
+                  n.x + W >= box.x &&
+                  n.y <= box.y + box.height &&
+                  n.y + nodeHeight(n.kind) >= box.y,
+              )
+              .map((n) => n.id);
+            g.ids = [
+              ...new Set([...(g.additive ? g.original : []), ...inside]),
+            ].slice(0, 512);
+            setPreviewSelection(g.ids);
           }
         }}
-        onPointerUp={() => {
+        onPointerUp={async () => {
           const g = gesture.current;
           gesture.current = null;
           if (!g) return;
-          if (g.id && g.moved && drag)
-            void patch(
-              [
-                {
-                  op: "update_node",
-                  id: g.id,
-                  x: Math.round(drag.x / 10) * 10,
-                  y: Math.round(drag.y / 10) * 10,
-                },
-              ],
-              `Move ${g.id}`,
-            );
-          else if (g.id) void select(g.id);
-          setDrag(null);
+          try {
+            if (!g.pan) {
+              const result = await action("view.select_nodes", {
+                expected_revision: g.revision,
+                ids: g.ids,
+              });
+              if (
+                result !== undefined &&
+                g.id &&
+                !g.toggleOff &&
+                g.moved &&
+                drag &&
+                (drag.dx || drag.dy)
+              ) {
+                await action("design.apply_patch", {
+                  expected_revision: g.revision,
+                  label: `Move ${g.ids.length} nodes`,
+                  operations: snapshot.document.nodes
+                    .filter((n) => g.ids.includes(n.id))
+                    .map((n) => ({
+                      op: "update_node",
+                      id: n.id,
+                      x: n.x + drag.dx,
+                      y: n.y + drag.dy,
+                    })),
+                });
+              }
+            }
+          } finally {
+            cancelGesture();
+          }
         }}
-        onPointerCancel={() => {
-          gesture.current = null;
-          setDrag(null);
-        }}
+        onPointerCancel={cancelGesture}
       >
         <defs>
           <pattern
             id="grid"
-            width={detailed ? 24 : 120}
-            height={detailed ? 24 : 120}
+            x={-spacing / 2}
+            y={-spacing / 2}
+            width={spacing}
+            height={spacing}
             patternUnits="userSpaceOnUse"
           >
-            <circle cx="1" cy="1" r=".8" className="grid-dot" />
+            <circle
+              cx={spacing / 2}
+              cy={spacing / 2}
+              r={0.8 / Math.max(scale, 0.02)}
+              className="grid-dot"
+            />
           </pattern>
         </defs>
         <rect
@@ -234,14 +389,36 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
           const a = nodes.find((n) => n.id === e.from)!,
             b = nodes.find((n) => n.id === e.to)!;
           const index = ports(b).findIndex(([p]) => p === e.port);
-          const d = cablePath(a, b, index, nodes);
+          const d = cablePath(a, b, index);
           return (
             <g
               key={e.id}
-              className={`wire tone-${tone(a.kind)} ${snapshot.selected === e.from || snapshot.selected === e.to ? "highlighted" : ""}`}
+              style={
+                {
+                  "--node-tone": nodeColor(snapshot, a.kind),
+                  "--wire-width": `${wireWidth(a.width > 1)}px`,
+                } as CSSProperties
+              }
+              className={`wire tone-${tone(a.kind)} ${selection.includes(e.from) || selection.includes(e.to) ? "highlighted" : ""}`}
             >
               <path className="wire-shadow" d={d} />
-              <path className="wire-core" d={d} />
+              <path
+                className="wire-core"
+                d={d}
+                style={{ strokeWidth: wireWidth(a.width > 1) }}
+              />
+              {detailed && (
+                <text
+                  className="wire-value"
+                  x={a.x + W + 8}
+                  y={a.y + portY(a, 0, true) - 12}
+                >
+                  {a.width > 1 ? `/${a.width}` : ""}
+                  {annotation?.values[a.id] != null
+                    ? ` · ${annotation.values[a.id]}`
+                    : ""}
+                </text>
+              )}
               <path
                 className="wire-hit"
                 d={d}
@@ -263,6 +440,11 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
         })}
         {sourceNode && pointer ? (
           <path
+            style={
+              {
+                "--node-tone": nodeColor(snapshot, sourceNode.kind),
+              } as CSSProperties
+            }
             className={`connection-preview tone-${tone(sourceNode.kind)}`}
             d={`M ${sourceNode.x + W} ${sourceNode.y + portY(sourceNode, 0, true)} C ${sourceNode.x + W + 60} ${sourceNode.y + portY(sourceNode, 0, true)} ${pointer.x - 60} ${pointer.y} ${pointer.x} ${pointer.y}`}
           />
@@ -272,18 +454,29 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
           const missing = snapshot.diagnostics.filter(
             (d) => d.node === n.id,
           ).length;
-          const selected = snapshot.selected === n.id;
+          const selected = selection.includes(n.id);
           return (
             <g
               key={n.id}
               data-testid={`node-${n.id}`}
-              className={`circuit-node tone-${tone(n.kind)} ${selected ? "selected" : ""} ${source === n.id ? "connecting" : ""} ${drag?.id === n.id ? "dragged" : ""}`}
+              style={
+                { "--node-tone": nodeColor(snapshot, n.kind) } as CSSProperties
+              }
+              className={`circuit-node tone-${tone(n.kind)} ${selected ? "selected" : ""} ${source === n.id ? "connecting" : ""} ${drag?.ids.includes(n.id) ? "dragged" : ""}`}
               transform={`translate(${n.x},${n.y})`}
               tabIndex={0}
               role="button"
+              aria-pressed={selected}
               aria-label={`${n.name}, ${n.kind}, ${n.width} bit`}
               onKeyDown={(e) => {
-                if (e.key === "Enter") void select(n.id);
+                if (e.key === "Enter")
+                  void selectNodes(
+                    e.shiftKey || e.metaKey || e.ctrlKey
+                      ? selectedIds.includes(n.id)
+                        ? selectedIds.filter((id) => id !== n.id)
+                        : [...selectedIds, n.id]
+                      : [n.id],
+                  );
                 if (e.key === "Delete" || e.key === "Backspace")
                   void patch(
                     [{ op: "remove_node", id: n.id }],
@@ -359,6 +552,24 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
               >
                 {n.width} bit
               </text>
+              {annotation?.values[n.id] != null && (
+                <>
+                  <text
+                    className="node-live-value"
+                    x={14}
+                    y={h / 2 + 10}
+                    fontSize={annotation.values[n.id].length > 12 ? 12 : 20}
+                  >
+                    {n.kind === "register" ? "Q = " : ""}
+                    {annotation.values[n.id]}
+                  </text>
+                  {annotation.register_d[n.id] != null && (
+                    <text className="node-live-d" x={14} y={h / 2 + 29}>
+                      D = {annotation.register_d[n.id]}
+                    </text>
+                  )}
+                </>
+              )}
               {ports(n).map(([p, width], i) => {
                 const connected = snapshot.document.edges.some(
                   (e) => e.to === n.id && e.port === p,
@@ -366,7 +577,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                 const compatible =
                   sourceNode &&
                   sourceNode.width === width &&
-                  sourceNode.id !== n.id &&
+                  (sourceNode.id !== n.id || n.kind === "register") &&
                   !connected;
                 return (
                   <g
@@ -397,19 +608,21 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                       className="port-ring"
                       cx="0"
                       cy={portY(n, i)}
-                      r="5.5"
+                      r={portRadius - (tiny ? 0 : portRim / 2)}
                     />
                     {connected ? (
                       <circle
                         className="port-center"
                         cx="0"
                         cy={portY(n, i)}
-                        r="2.5"
+                        r={Math.max(2.5, 0.8 / safeScale)}
                       />
                     ) : null}
-                    <text x="12" y={portY(n, i) + 4}>
+                    <text x="12" y={labelY(n, i)}>
                       {p}
-                      <tspan className="port-width"> · {width}</tspan>
+                      <tspan className="port-width">
+                        {width > 1 ? `[${width - 1}:0]` : ""}
+                      </tspan>
                     </text>
                     <title>
                       {p} · {width} bit
@@ -445,25 +658,51 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                     className="port-ring"
                     cx={W}
                     cy={portY(n, 0, true)}
-                    r="5.5"
+                    r={portRadius - (tiny ? 0 : portRim / 2)}
                   />
                   <circle
                     className="port-center"
                     cx={W}
                     cy={portY(n, 0, true)}
-                    r="2.5"
+                    r={Math.max(2.5, 0.8 / safeScale)}
                   />
-                  <text x={W - 12} y={portY(n, 0, true) + 4} textAnchor="end">
-                    y
+                  <text x={W - 12} y={labelY(n, 0, true)} textAnchor="end">
+                    {n.kind === "register" ? "q" : "y"}
+                    {n.width > 1 ? `[${n.width - 1}:0]` : ""}
                   </text>
                 </g>
               ) : null}
+              {tiny && (
+                <text
+                  className="node-overview-symbol"
+                  x={W / 2}
+                  y={h / 2}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  fontSize={
+                    n.kind === "mux" || n.kind === "register"
+                      ? 100
+                      : n.kind === "or"
+                        ? 140
+                        : 167
+                  }
+                >
+                  {n.kind === "input"
+                    ? "I"
+                    : n.kind === "output"
+                      ? "O"
+                      : n.kind === "register"
+                        ? "D/Q"
+                        : symbols[n.kind]}
+                </text>
+              )}
               <title>
                 {n.name} · {n.kind.toUpperCase()} · {n.width} bit
               </title>
             </g>
           );
         })}
+        {marquee && <rect className="selection-marquee" {...marquee} />}
       </svg>
       <div className="canvas-bottom">
         <span>

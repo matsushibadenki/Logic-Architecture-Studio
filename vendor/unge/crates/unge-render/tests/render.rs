@@ -639,6 +639,8 @@ fn gpu_text_clips_stacks_and_renders_cjk_at_two_pixel_densities() {
             },
             font_size: 16.,
             right_aligned: false,
+            centered: false,
+            bold: false,
             color: [1.; 4],
             after_quad: scene.quads.len(),
         });

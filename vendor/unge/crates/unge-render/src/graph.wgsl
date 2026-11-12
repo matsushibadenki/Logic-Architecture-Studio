@@ -10,7 +10,9 @@ struct Output {
 };
 @vertex fn vs(@builtin(vertex_index) i: u32, @location(0) rect: vec4<f32>, @location(1) color: vec4<f32>, @location(2) params: vec4<f32>) -> Output {
     let corners = array<vec2<f32>,6>(vec2(-1.,-1.),vec2(1.,-1.),vec2(-1.,1.),vec2(-1.,1.),vec2(1.,-1.),vec2(1.,1.));
-    let local = corners[i]*rect.zw*0.5;
+    // Thin strokes need fragments outside the nominal bounds for centered AA.
+    let padding = select(0., 1./camera.origin_zoom.z, params.z < -0.5);
+    let local = corners[i]*(rect.zw*0.5+vec2(padding));
     let c = cos(params.x); let s = sin(params.x);
     let world = rect.xy+vec2(c*local.x-s*local.y,s*local.x+c*local.y);
     let screen = (world-camera.origin_zoom.xy)*camera.origin_zoom.z;
@@ -21,7 +23,7 @@ struct Output {
 }
 @fragment fn fs(in: Output) -> @location(0) vec4<f32> {
     if in.params.z > 0.5 {
-        let spacing = select(24.,120.,camera.origin_zoom.z < 0.3);
+        let spacing = in.params.w;
         let cell = abs(fract(in.world/spacing-0.5)-0.5)*spacing;
         let line = 1.-smoothstep(0.55,1.35,length(cell)*camera.origin_zoom.z);
         return vec4(mix(in.color.rgb,camera.grid_color.rgb,line*camera.grid_color.a),in.color.a);
@@ -29,6 +31,11 @@ struct Output {
     let radius = min(in.params.y,min(in.half_size.x,in.half_size.y));
     let q = abs(in.local)-in.half_size+vec2(radius);
     let distance = length(max(q,vec2(0.)))+min(max(q.x,q.y),0.)-radius;
+    if in.params.z < -0.5 {
+        let half_pixel = 0.5/camera.origin_zoom.z;
+        let alpha = 1.-smoothstep(-half_pixel,half_pixel,distance);
+        return vec4(in.color.rgb,in.color.a*alpha);
+    }
     let feather = max(1./camera.origin_zoom.z,in.params.w);
     let alpha = 1.-smoothstep(-feather,0.,distance);
     return vec4(in.color.rgb,in.color.a*alpha);

@@ -1,7 +1,7 @@
 use crate::{Scene, TextLabel};
 use cosmic_text::{
     Attrs, Buffer, CacheKey, FontSystem, LayoutGlyph, Metrics, Shaping, SwashCache, SwashContent,
-    Wrap,
+    Weight, Wrap,
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -72,7 +72,7 @@ pub struct TextStats {
     pub uploaded_bytes: usize,
     pub upload_writes: usize,
 }
-type LayoutKey = (String, u32);
+type LayoutKey = (String, u32, bool);
 pub(crate) struct TextRenderer {
     pub stats: TextStats,
     fonts: FontSystem,
@@ -247,7 +247,7 @@ impl TextRenderer {
         self.shelf = Shelf::default();
     }
     fn line(&mut self, label: &TextLabel) -> Arc<Line> {
-        let key = (label.text.clone(), label.font_size.to_bits());
+        let key = (label.text.clone(), label.font_size.to_bits(), label.bold);
         if let Some(line) = self.layouts.get(&key) {
             return line.clone();
         }
@@ -256,7 +256,12 @@ impl TextRenderer {
             Metrics::new(label.font_size, label.font_size * 1.3),
         );
         buffer.set_wrap(Wrap::None);
-        buffer.set_text(&label.text, &Attrs::new(), Shaping::Advanced, None);
+        let attrs = Attrs::new().weight(if label.bold {
+            Weight::BOLD
+        } else {
+            Weight::NORMAL
+        });
+        buffer.set_text(&label.text, &attrs, Shaping::Advanced, None);
         // cosmic-text setters defer shaping; finish layout before caching glyphs.
         buffer.shape_until_scroll(&mut self.fonts, false);
         let line = Arc::new(
@@ -452,13 +457,42 @@ impl TextRenderer {
             if clip[0] >= clip[2] || clip[1] >= clip[3] {
                 continue;
             }
-            let align = if label.right_aligned {
+            let mut align = if label.right_aligned {
                 (label.rect.width - line.width).max(0.0) * scale
             } else {
                 0.0
             };
             let raster_scale = scale.min(512.0 / label.font_size);
             let magnify = scale / raster_scale;
+            let mut vertical_align = 0.0;
+            if label.centered {
+                // Ink bounds, rather than line height or guessed offsets, also
+                // center operators such as + and ^ with different baselines.
+                let mut bounds: Option<[f32; 4]> = None;
+                for glyph in &line.glyphs {
+                    let physical =
+                        glyph.physical((0.0, line.baseline * raster_scale), raster_scale);
+                    if let Some(g) = self.glyph(queue, physical.cache_key)? {
+                        if g.width == 0 || g.height == 0 {
+                            continue;
+                        }
+                        let x = (physical.x as f32 + g.left as f32) * magnify;
+                        let y = (physical.y as f32 - g.top as f32) * magnify;
+                        let right = x + g.width as f32 * magnify;
+                        let bottom = y + g.height as f32 * magnify;
+                        bounds = Some(match bounds {
+                            Some(b) => {
+                                [b[0].min(x), b[1].min(y), b[2].max(right), b[3].max(bottom)]
+                            }
+                            None => [x, y, right, bottom],
+                        });
+                    }
+                }
+                if let Some(b) = bounds {
+                    align = (label.rect.width * scale - (b[2] - b[0])) * 0.5 - b[0];
+                    vertical_align = (label.rect.height * scale - (b[3] - b[1])) * 0.5 - b[1];
+                }
+            }
             let start = instances.len() as u32;
             for glyph in &line.glyphs {
                 // Cull before rasterizing long labels clipped to a narrow box.
@@ -475,7 +509,7 @@ impl TextRenderer {
                     continue;
                 };
                 let x = left + align + (physical.x as f32 + g.left as f32) * magnify;
-                let y = top + (physical.y as f32 - g.top as f32) * magnify;
+                let y = top + vertical_align + (physical.y as f32 - g.top as f32) * magnify;
                 let x0 = x.max(clip[0]);
                 let y0 = y.max(clip[1]);
                 let x1 = (x + g.width as f32 * magnify).min(clip[2]);

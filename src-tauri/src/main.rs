@@ -3,6 +3,7 @@ mod layout_store;
 mod measurement;
 mod native;
 mod panels;
+mod preferences;
 mod recovery;
 mod sync;
 mod workspaces;
@@ -23,7 +24,7 @@ async fn command(
 ) -> Result<Value, String> {
     let notify = !matches!(
         method.as_str(),
-        "project.sync" | "project.inspect" | "design.get_ir"
+        "project.sync" | "project.inspect" | "design.get_ir" | "simulation.state"
     );
     if method == "project.sync"
         && args["scope"] == "web"
@@ -31,6 +32,7 @@ async fn command(
     {
         args["scope"] = json!("full");
     }
+    let update_signals = method.starts_with("simulation.");
     let path = root.0.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         studio_service::call(
@@ -44,11 +46,80 @@ async fn command(
     })
     .await
     .map_err(|e| e.to_string())??;
+    if update_signals {
+        let annotation = &result["session"]["annotation"];
+        if let (Some(shared), Some(revision)) = (
+            app.try_state::<native::Shared>(),
+            annotation["revision"].as_u64(),
+        ) {
+            if let (Ok(values), Ok(register_d)) = (
+                serde_json::from_value(annotation["values"].clone()),
+                serde_json::from_value(annotation["register_d"].clone()),
+            ) {
+                let mut native = shared.lock().unwrap();
+                if native.renderer.set_signal_sample(
+                    annotation["version"].as_u64().unwrap_or(0),
+                    revision,
+                    values,
+                    register_d,
+                ) {
+                    native.dirty = true;
+                }
+            }
+        }
+    }
     if notify {
         sync::wake(&app);
         let _ = app.emit("design-changed", ());
     }
     Ok(result)
+}
+#[tauri::command]
+async fn save_vcd(
+    webview: tauri::Webview,
+    root: tauri::State<'_, CoreRoot>,
+    expected_revision: u64,
+    trace_id: String,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let path = root.0.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            studio_service::call(
+                &path,
+                &studio_service::Request {
+                    method: "simulation.vcd".into(),
+                    args: json!({"expected_revision":expected_revision,"trace_id":trace_id}),
+                    actor: "gui".into(),
+                },
+            )
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        let parent = webview.window();
+        if let Some(file) = rfd::AsyncFileDialog::new()
+            .set_parent(&parent)
+            .set_file_name("simulation.vcd")
+            .add_filter("VCD", &["vcd"])
+            .save_file()
+            .await
+        {
+            let source = result["source"]
+                .as_str()
+                .ok_or("Missing VCD source")?
+                .to_string();
+            tauri::async_runtime::spawn_blocking(move || std::fs::write(file.path(), source))
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (webview, root, expected_revision, trace_id);
+        Err("Native VCD save dialog is not supported on this platform yet".into())
+    }
 }
 #[tauri::command]
 async fn float_panel(app: tauri::AppHandle, panel: String) -> Result<(), String> {
@@ -104,6 +175,10 @@ async fn gpu_view(app: tauri::AppHandle, root: tauri::State<'_, CoreRoot>) -> Re
                     serde_json::from_value::<design_core::Document>(snapshot["document"].clone())
                 {
                     if let Ok(mut r) = renderer.lock() {
+                        r.set_node_colors(
+                            serde_json::from_value(snapshot["node_colors"].clone())
+                                .unwrap_or_default(),
+                        );
                         if let Err(e) = r.draw(
                             &doc,
                             snapshot["selected"].as_str(),
@@ -232,6 +307,7 @@ fn main() {
                 view: Default::default(),
                 position: None,
                 down: false,
+                modifiers: Default::default(),
                 graph_rect: [0., 56., 1000., 700.],
             })));
             window.add_child(
@@ -299,6 +375,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             command,
+            preferences::preferences_open,
+            save_vcd,
             workspaces::workspace_info,
             workspaces::workspace_pick,
             recovery::recovery_status,

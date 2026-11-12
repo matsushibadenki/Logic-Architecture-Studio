@@ -11,6 +11,18 @@ import { action, rpc, select } from "../store";
 import { translation } from "../i18n";
 import type { Snapshot } from "../types";
 import { Hint, IconButton } from "./ui";
+import { Simulation } from "./Simulation";
+
+type FormalResult = {
+  revision: number;
+  status: "proved" | "counterexample" | "inconclusive";
+  width: number;
+  counterexample: Record<string, string> | null;
+  artifact_directory: string;
+  error: string | null;
+  log: string;
+};
+
 type RtlResult = {
   backend: "icarus" | "verilator";
   revision: number;
@@ -39,11 +51,9 @@ export function Results({
   const [tools, setTools] = useState<{ name: string; installed: boolean }[]>(
     [],
   );
+  const [formal, setFormal] = useState<FormalResult | null>(null);
   const [rtl, setRtl] = useState<RtlResult | null>(null);
   const [log, setLog] = useState("");
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [outputs, setOutputs] = useState<Record<string, string> | null>(null);
-  const [outputRevision, setOutputRevision] = useState<number | null>(null);
   const r = snapshot.report;
   useEffect(() => {
     if (tab === "tools")
@@ -76,7 +86,21 @@ export function Results({
         <div className="verification-content">
           {r ? (
             <>
-              <div className="report-summary">
+              {r.revision !== snapshot.revision && (
+                <div className="stale-banner" role="status">
+                  <strong>{t("staleResults")}</strong>
+                  <button
+                    disabled={busy}
+                    onClick={() => void action("verify.run_tests")}
+                  >
+                    <RefreshCw size={14} />
+                    {t("rerun")}
+                  </button>
+                </div>
+              )}
+              <div
+                className={`report-summary ${r.revision !== snapshot.revision ? "stale-data" : ""}`}
+              >
                 {r.passed === r.total ? (
                   <CheckCircle2 size={22} className="success" />
                 ) : (
@@ -189,6 +213,19 @@ export function Results({
                   }}
                 />
               ) : null}
+              {tool.name === "yosys" && (
+                <IconButton
+                  label={t("proveAlu")}
+                  icon={CheckCircle2}
+                  disabled={!tool.installed || busy}
+                  onClick={async () => {
+                    const result = await action<FormalResult>("verify.formal", {
+                      expected_revision: snapshot.revision,
+                    });
+                    if (result) setFormal(result);
+                  }}
+                />
+              )}
               {tool.name === "yosys" ? (
                 <button
                   className="text-button"
@@ -203,6 +240,43 @@ export function Results({
               ) : null}
             </div>
           ))}
+          {formal && (
+            <div className="rtl-test-result" role="status">
+              <div className="rtl-test-summary">
+                <strong>
+                  {t(
+                    formal.status === "proved"
+                      ? "proved"
+                      : formal.status === "counterexample"
+                        ? "counterexample"
+                        : "inconclusive",
+                  )}
+                </strong>
+                <code>Yosys SAT · r{formal.revision}</code>
+                {formal.revision !== snapshot.revision && (
+                  <span className="stale">{t("stale")}</span>
+                )}
+                <Hint text={t("formalInfo")} />
+              </div>
+              <span>ALU · {formal.width} bit</span>
+              {formal.counterexample && (
+                <pre>
+                  {Object.entries(formal.counterexample)
+                    .map(([name, value]) => `${name} = ${value}`)
+                    .join("\n")}
+                </pre>
+              )}
+              <details>
+                <summary>{t("details")}</summary>
+                <code className="recovery-path">
+                  {formal.artifact_directory}
+                </code>
+                <pre>
+                  {[formal.error, formal.log].filter(Boolean).join("\n")}
+                </pre>
+              </details>
+            </div>
+          )}
           {rtl && (
             <div className="rtl-test-result" role="status">
               <div className="rtl-test-summary">
@@ -245,63 +319,7 @@ export function Results({
         </div>
       ) : null}
       {tab === "simulation" ? (
-        <div className="simulation-form">
-          <div className="simulation-inputs">
-            {snapshot.document.nodes
-              .filter((n) => n.kind === "input")
-              .map((n) => (
-                <label key={n.id}>
-                  {n.name}
-                  <input
-                    aria-label={`input ${n.name}`}
-                    value={values[n.name] ?? "0"}
-                    onChange={(e) =>
-                      setValues((v) => ({ ...v, [n.name]: e.target.value }))
-                    }
-                  />
-                  <small>{n.width} bit</small>
-                </label>
-              ))}
-            <IconButton
-              label={t("evaluate")}
-              icon={Play}
-              disabled={busy}
-              onClick={async () => {
-                const inputs = Object.fromEntries(
-                  snapshot.document.nodes
-                    .filter((n) => n.kind === "input")
-                    .map((n) => [n.name, values[n.name] ?? "0"]),
-                );
-                const result = await action<{
-                  outputs: Record<string, string>;
-                  revision: number;
-                }>("simulation.evaluate", { inputs });
-                if (result) {
-                  setOutputs(result.outputs);
-                  setOutputRevision(result.revision);
-                }
-              }}
-            />
-          </div>
-          {outputs ? (
-            <div className="simulation-outputs">
-              {Object.entries(outputs).map(([name, value]) => (
-                <span key={name}>
-                  <code>{name}</code>
-                  <strong>{value}</strong>
-                </span>
-              ))}
-              <small
-                className={
-                  outputRevision !== snapshot.revision ? "warning" : ""
-                }
-              >
-                r{outputRevision} ·{" "}
-                {t(outputRevision === snapshot.revision ? "current" : "stale")}
-              </small>
-            </div>
-          ) : null}
-        </div>
+        <Simulation snapshot={snapshot} busy={busy} />
       ) : null}
     </div>
   );

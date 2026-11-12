@@ -65,6 +65,9 @@ fn fixture() -> (Document, LabelCatalog) {
         catalog.insert(
             kind.into(),
             NodeLabels {
+                state: None,
+                next_state: None,
+                signal_width: 1,
                 symbol: ["I", "C", "M", "+", "E"][i].into(),
                 caption: [
                     text("Source image", "元の画像", "原始图像"),

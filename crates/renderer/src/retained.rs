@@ -5,6 +5,7 @@ use unge_render::{SceneChanges, SceneUpdate};
 /// Derived view cache only; the canonical Rust service remains the authority.
 pub struct RetainedProjection {
     source: Document,
+    node_colors: BTreeMap<String, String>,
     editor: Editor,
     pub index: SceneIndex,
     pub labels: LabelCatalog,
@@ -16,11 +17,25 @@ impl RetainedProjection {
         let index = SceneIndex::new(&doc);
         Ok(Self {
             source: source.clone(),
+            node_colors: BTreeMap::new(),
             editor: Editor::new(doc, 0).map_err(|e| e.to_string())?,
             index,
             labels,
             ids: Arc::new(ids),
         })
+    }
+    pub fn set_node_colors(&mut self, colors: &BTreeMap<String, String>) {
+        if &self.node_colors == colors {
+            return;
+        }
+        self.node_colors = colors.clone();
+        for node in &self.source.nodes {
+            if let Some(label) = self.labels.get_mut(&node.id) {
+                label.color = colors
+                    .get(node.kind.key())
+                    .and_then(|c| design_core::parse_node_color(c));
+            }
+        }
     }
     pub fn document(&self) -> &unge_core::Document {
         self.editor.document()
@@ -123,7 +138,12 @@ impl RetainedProjection {
                 .get(&n.id)
                 .is_none_or(|v| v.name != n.name || v.kind != n.kind || v.width != n.width)
             {
-                self.labels.insert(n.id.clone(), node_labels(n));
+                let mut label = node_labels(n);
+                label.color = self
+                    .node_colors
+                    .get(n.kind.key())
+                    .and_then(|c| design_core::parse_node_color(c));
+                self.labels.insert(n.id.clone(), label);
             }
             Arc::make_mut(&mut self.ids)
                 .entry(n.id.clone())

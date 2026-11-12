@@ -110,7 +110,11 @@ pub fn between(old: &Workspace, new: &Workspace) -> Value {
     }
     field!(revision);
     field!(selected);
+    if old.selected_nodes() != new.selected_nodes() {
+        set.insert("selection".into(), json!(new.selected_nodes()));
+    }
     field!(locale);
+    field!(node_colors);
     field!(panels);
     field!(report);
     if old.undo.is_empty() != new.undo.is_empty() {

@@ -1,3 +1,5 @@
+mod preferences;
+pub use preferences::{default_node_colors, parse_node_color};
 pub mod entities;
 pub mod model;
 pub mod protocol;
@@ -107,7 +109,11 @@ pub struct Workspace {
     pub report: Option<TestReport>,
     pub experiments: Vec<Experiment>,
     pub selected: Option<String>,
+    #[serde(default)]
+    pub selection: Vec<String>,
     pub locale: String,
+    #[serde(default = "default_node_colors")]
+    pub node_colors: BTreeMap<String, String>,
     pub panels: BTreeMap<String, String>,
     #[serde(skip)]
     history_cache: HistoryCache,
@@ -124,7 +130,9 @@ impl Default for Workspace {
             report: None,
             experiments: vec![],
             selected: Some("add".into()),
+            selection: vec!["add".into()],
             locale: "ja".into(),
+            node_colors: default_node_colors(),
             history_cache: HistoryCache::default(),
             panels: BTreeMap::new(),
         }
@@ -233,8 +241,15 @@ fn apply_positions(document: &Document, operations: &[Operation]) -> Result<Docu
     Ok(next)
 }
 impl Workspace {
+    pub fn selected_nodes(&self) -> Vec<String> {
+        if self.selection.is_empty() {
+            self.selected.iter().cloned().collect()
+        } else {
+            self.selection.clone()
+        }
+    }
     pub fn snapshot(&self) -> Value {
-        json!({"document":self.document,"revision":self.revision,"history":self.history,"can_undo":!self.undo.is_empty(),"can_redo":!self.redo.is_empty(),"report":self.report,"experiments":self.experiments,"selected":self.selected,"locale":self.locale,"panels":self.panels,"diagnostics":self.document.diagnostics()})
+        json!({"document":self.document,"revision":self.revision,"history":self.history,"can_undo":!self.undo.is_empty(),"can_redo":!self.redo.is_empty(),"report":self.report,"experiments":self.experiments,"selected":self.selected,"selection":self.selected_nodes(),"locale":self.locale,"node_colors":self.node_colors,"panels":self.panels,"diagnostics":self.document.diagnostics()})
     }
     fn check_revision(&self, r: u64) -> Result<(), String> {
         if r != self.revision {
@@ -262,6 +277,10 @@ impl Workspace {
             .is_some_and(|id| self.document.node(id).is_err())
         {
             self.selected = None;
+        }
+        self.selection.retain(|id| self.document.node(id).is_ok());
+        if self.selected.is_none() {
+            self.selected = self.selection.first().cloned();
         }
     }
     pub fn init_history_budget(&mut self) {
@@ -399,21 +418,24 @@ impl Workspace {
                 self.check_revision(revision(&args)?)?;
                 let mut doc = (*self.document).clone();
                 let mut levels: BTreeMap<String, usize> = BTreeMap::new();
-                let mut rows: BTreeMap<usize, usize> = BTreeMap::new();
+                let mut next_y: BTreeMap<usize, f32> = BTreeMap::new();
                 for id in doc.order()? {
                     let level = doc
                         .edges
                         .iter()
-                        .filter(|e| e.to == id)
+                        .filter(|e| {
+                            e.to == id
+                                && doc.node(&id).is_ok_and(|node| node.kind != Kind::Register)
+                        })
                         .map(|e| levels[&e.from] + 1)
                         .max()
                         .unwrap_or(0);
                     levels.insert(id.clone(), level);
-                    let row = rows.entry(level).or_default();
+                    let y = next_y.entry(level).or_insert(70.);
                     let n = doc.nodes.iter_mut().find(|n| n.id == id).unwrap();
-                    n.x = 40. + level as f32 * 280.;
-                    n.y = 70. + *row as f32 * 180.;
-                    *row += 1;
+                    n.x = 40. + level as f32 * (NODE_WIDTH + 72.);
+                    n.y = *y;
+                    *y += node_height(&n.kind) + 32.;
                 }
                 self.commit(doc, "layout.auto_arrange".into(), actor);
                 Ok(self.reply(compact))
@@ -422,16 +444,40 @@ impl Workspace {
                 let id = field(&args, "id")?;
                 self.document.node(id)?;
                 self.selected = Some(id.into());
+                self.selection = vec![id.into()];
+                Ok(self.reply(compact))
+            }
+            "view.select_nodes" => {
+                self.check_revision(revision(&args)?)?;
+                let mut ids: Vec<String> = parse(args["ids"].clone())?;
+                if ids.len() > 512 {
+                    return Err("Select at most 512 nodes".into());
+                }
+                ids.sort();
+                if ids.windows(2).any(|pair| pair[0] == pair[1]) {
+                    return Err("Duplicate selection ID".into());
+                }
+                for id in &ids {
+                    self.document.node(id)?;
+                }
+                self.selected = ids.first().cloned();
+                self.selection = ids;
                 Ok(self.reply(compact))
             }
             "view.preferences" => {
-                if let Some(locale) = args["locale"].as_str() {
-                    if !["en", "ja", "zh"].contains(&locale) {
-                        return Err("Unknown locale".into());
-                    }
-                    self.locale = locale.into();
+                // Validate every field before publishing any preference changes.
+                let locale = args
+                    .get("locale")
+                    .map(|v| v.as_str().ok_or("Invalid locale"))
+                    .transpose()?;
+                if locale.is_some_and(|v| !["en", "ja", "zh"].contains(&v)) {
+                    return Err("Unknown locale".into());
                 }
-                if let Some(panel) = args["panel"].as_str() {
+                let panel = args
+                    .get("panel")
+                    .map(|v| v.as_str().ok_or("Invalid panel"))
+                    .transpose()?;
+                let position = if let Some(panel) = panel {
                     if !["inspector", "results", "library"].contains(&panel) {
                         return Err("Unknown panel".into());
                     }
@@ -439,13 +485,56 @@ impl Workspace {
                     if !["left", "right", "bottom", "floating", "hidden"].contains(&position) {
                         return Err("Unknown panel position".into());
                     }
+                    Some(position)
+                } else {
+                    None
+                };
+                let reset = args
+                    .get("reset_colors")
+                    .map(|v| v.as_bool().ok_or("Invalid reset_colors"))
+                    .transpose()?
+                    .unwrap_or(false);
+                let defaults = default_node_colors();
+                let mut colors = if reset {
+                    defaults.clone()
+                } else {
+                    self.node_colors.clone()
+                };
+                if let Some(changes) = args.get("node_colors") {
+                    let changes: BTreeMap<String, Option<String>> = parse(changes.clone())?;
+                    for (kind, color) in changes {
+                        let default = defaults.get(&kind).ok_or("Unknown node kind")?;
+                        if let Some(color) = color {
+                            if parse_node_color(&color).is_none() {
+                                return Err("Color must be #RRGGBB".into());
+                            }
+                            colors.insert(kind, color.to_ascii_lowercase());
+                        } else {
+                            colors.insert(kind, default.clone());
+                        }
+                    }
+                }
+                if let Some(locale) = locale {
+                    self.locale = locale.into();
+                }
+                if let (Some(panel), Some(position)) = (panel, position) {
                     self.panels.insert(panel.into(), position.into());
                 }
+                self.node_colors = colors;
                 Ok(self.reply(compact))
             }
             "rtl.generate" => Ok(
                 json!({"revision":self.revision,"language":"Verilog-2005","source":self.document.rtl()?}),
             ),
+            "simulation.cycles" => {
+                if args["expected_revision"].as_u64() != Some(self.revision) {
+                    return Err("Revision conflict".into());
+                }
+                let cycles: Vec<CycleInput> = parse(args["cycles"].clone())?;
+                Ok(
+                    json!({"revision": self.revision, "samples": self.document.simulate_cycles(&cycles)?}),
+                )
+            }
             "simulation.evaluate" => {
                 let strings: BTreeMap<String, String> = parse(args["inputs"].clone())?;
                 let inputs = strings
@@ -572,7 +661,8 @@ pub fn number(s: &str) -> Result<u64, String> {
     }
     .map_err(|_| "Expected unsigned 64-bit decimal or hexadecimal string".into())
 }
-pub fn alu_vectors(doc: &Document) -> Result<Vec<TestVector>, String> {
+pub fn alu_width(doc: &Document) -> Result<u8, String> {
+    doc.require_combinational()?;
     let a = doc
         .nodes
         .iter()
@@ -599,7 +689,12 @@ pub fn alu_vectors(doc: &Document) -> Result<Vec<TestVector>, String> {
                 .into(),
         );
     }
-    let max = mask(a.width);
+    Ok(a.width)
+}
+
+pub fn alu_vectors(doc: &Document) -> Result<Vec<TestVector>, String> {
+    let width = alu_width(doc)?;
+    let max = mask(width);
     let values = [0, 1, max, max >> 1];
     let mut pairs = vec![];
     for x in values {

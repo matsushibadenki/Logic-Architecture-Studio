@@ -135,3 +135,55 @@ fn large_single_move_regenerates_only_node_and_incident_edges() {
     assert_eq!(idle.geometry_stats.rebuilt_nodes, 0);
     assert_eq!(idle.geometry_stats.rebuilt_edges, 0);
 }
+
+#[test]
+fn appearance_rebuilds_only_affected_nodes_and_source_wires() {
+    let mut doc = Document::demo();
+    let mut cache = RetainedProjection::new(&doc).unwrap();
+    let draw = |cache: &RetainedProjection| {
+        cache
+            .index
+            .scene_with_labels(
+                Viewport {
+                    origin: [-30., -30.],
+                    size: [1600., 1000.],
+                    zoom: 0.7,
+                },
+                &BTreeSet::new(),
+                &Default::default(),
+                &cache.labels,
+                Locale::En,
+            )
+            .unwrap()
+    };
+    let before = draw(&cache);
+    let colors = std::collections::BTreeMap::from([("add".into(), "#ff3344".into())]);
+    cache.labels.get_mut("add").unwrap().state = Some("7".into());
+    cache.set_node_colors(&colors);
+    assert_eq!(cache.labels["add"].state.as_deref(), Some("7"));
+    assert_eq!(cache.labels["add"].color, Some([255, 51, 68]));
+    let colored = draw(&cache);
+    assert_eq!(colored.geometry_stats.rebuilt_nodes, 1);
+    assert_eq!(
+        colored.geometry_stats.rebuilt_edges,
+        doc.edges.iter().filter(|e| e.from == "add").count()
+    );
+    assert_ne!(
+        bytemuck::cast_slice::<_, u8>(&before.quads),
+        bytemuck::cast_slice::<_, u8>(&colored.quads)
+    );
+    assert_eq!(draw(&cache).geometry_stats.rebuilt_nodes, 0);
+    doc.nodes.update("add", |n| n.x += 24.).unwrap();
+    cache.sync(&doc).unwrap();
+    assert_eq!(cache.labels["add"].color, Some([255, 51, 68]));
+    doc.nodes.update("add", |n| n.name = "sum".into()).unwrap();
+    cache.sync(&doc).unwrap();
+    assert_eq!(cache.labels["add"].color, Some([255, 51, 68]));
+    doc.nodes.update("add", |n| n.kind = Kind::Sub).unwrap();
+    cache.sync(&doc).unwrap();
+    assert_eq!(cache.labels["add"].color, None);
+    cache.sync(&Document::demo()).unwrap();
+    assert_eq!(cache.labels["add"].color, Some([255, 51, 68]));
+    cache.set_node_colors(&Default::default());
+    compare(&cache, &Document::demo());
+}

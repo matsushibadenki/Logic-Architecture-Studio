@@ -36,7 +36,7 @@ Icarus Verilog 13.0 was installed from Homebrew for real execution checks:
 - Service revision conflict is rejected; successful execution leaves Workspace identical.
 - Native GUI launched with PATH only `/usr/bin:/bin` still finds Icarus/vvp. Docked execution passes both 320/320 at r0; native node movement reaches r1 and marks the old result stale. Floating execution passes at r1, and bottom re-docking preserves the result. The 420 pt floating window was visually checked and the status text stays together.
 
-The new GUI flow was exercised in Japanese. Windows/Linux packaging/interaction is ⭕️ [Pending]. Formal proof, sequential clocks/resets and waveforms remain unfinished.
+The new GUI flow was exercised in Japanese. Windows/Linux packaging/interaction is ⭕️ [Pending]. Waveform visualization and VCD export remain on the ROADMAP.
 
 ## Verilator adapter — 2026-11-10
 
@@ -46,8 +46,50 @@ Verilator compiles with fixed `--binary --timing --top-module __las_verification
 
 Verilator 5.054 was installed through Homebrew. Real-tool differential tests run the same 320 vectors through both engines at 1/8/32/64 bits, covering the normal ADD/AND/XOR/MUX circuit and SUB/OR/NOT variants. Both engines match Rust and the supplied expectations. Intentionally wrong generated RTL and invalid Verilog are rejected, and `verify.rtl` service dispatch selects Verilator without changing the circuit revision. The shared timeout/output-limit tests remain applicable.
 
-The adapter compares fully driven binary inputs/outputs of validated combinational circuits. Verilator's two-state behavior is not a proof of X/Z equivalence with Icarus. Broader generated topologies, irregular widths, multiple outputs, formal and sequential verification remain ROADMAP work. C++ toolchain absence or compiler failure is an execution failure with retained logs, never a passing result.
+The adapter compares fully driven binary inputs/outputs of validated combinational circuits. Verilator's two-state behavior is not a proof of X/Z equivalence with Icarus. Sequential verification remains ROADMAP work. C++ toolchain absence or compiler failure is an execution failure with retained logs, never a passing result.
 
 Native macOS QA used PATH `/usr/bin:/bin`: both tools were detected. Verilator and Icarus each passed **320/320** at r0; a native node move reached r1 and marked the r0 result stale. In a 420 pt floating Results window, Verilator passed again at r1 with readable engine/revision/count labels. Bottom re-docking retained the result. The new flow was exercised in Japanese; Windows/Linux and actual screen-reader speech remain ⭕️ [Pending].
 
 For the full service suite including external tools, use `cargo test -p studio-service --locked -- --include-ignored --test-threads=1`. In a parallel run, one recovery test temporarily failed to reacquire the owner lock while other tests spawned child processes; the isolated recovery test passed. This is consistent with transient file-lock inheritance during process startup; serial execution avoids that overlap. The ordinary workspace suite (external-tool tests ignored) passed in parallel.
+
+## Seeded circuit regression — 2026-11-12
+
+Three fixed seeds generate combinational circuits with four outputs each and width pairs of 3/17, 7/33, and 31/63 bits. The fixtures exercise every supported operator, reverse node order to check output mapping, and drive all four MUX selector values. Each circuit receives 64 vectors including zero, all ones, and seeded hexadecimal inputs. Both simulators matched the Rust evaluator for all 384 simulator/vector pairs. Expected values come from Rust for these generated circuits.
+
+Run the regression with `cargo test -p studio-service seeded_multi_output --locked -- --ignored`.
+
+## Combinational ALU proof — 2026-11-12
+
+With Yosys installed, use the proof icon on the Yosys row in Results → Tools. MCP clients can call `verify.formal` with `{"expected_revision": 0}`, substituting the current revision. The same revision check and job lock used for sampled RTL verification apply.
+
+The proof checks the `result` port for every binary assignment to `a`, `b` and the 2-bit `op`. The reference uses modular addition for 0, bitwise AND for 1 and XOR for 2 or 3. Yosys flattens the generated RTL and the reference into a miter, then checks whether the mismatch signal can ever be asserted. This proof covers the built-in ALU contract and combinational binary behavior. See the [Yosys SAT command reference](https://yosyshq.readthedocs.io/projects/yosys/en/latest/cmd/index_formal.html).
+
+The result reports `proved`, `counterexample` or `inconclusive`. It records the revision and includes hexadecimal input and output values when the solver supplies a valid witness. The SAT solver has a 25-second limit, and the process has a 30-second deadline and monitored log limit. The run directory contains the RTL, miter, proof script, log, result, and WaveJSON witness when available.
+
+Yosys 0.70 proved the default 32-bit and a 64-bit ALU. Replacing ADD with SUB produced a witness whose output and expected value were independently checked using wrapping 64-bit arithmetic. A stale request revision was rejected.
+
+The macOS release app displayed a proof at revision 0, marked it stale after changing ADD to SUB, and displayed the resulting counterexample at revision 1. The counterexample survived floating and re-docking the Results panel. The existing synthesis button also ran Yosys 0.70 successfully and wrote a JSON netlist.
+
+
+## Sequential circuits
+
+Add a Register node and connect its width-matched `d` input. All registers sample together on the rising edge of `las_clk`. Asserting `las_reset` at that edge sets every register to zero. Both signals are shared top-level ports in exported Verilog. Feedback through a register is supported. Validation still rejects combinational cycles.
+
+In Results → Signal Evaluation, enter input values and press Reset to start a trace. The clock button adds one rising edge using the current inputs. The table shows register and output values after each edge. An edit makes the trace stale; Rerun replays its captured stimuli against the new revision, while Reset starts a new trace. MCP clients can call `simulation.cycles` with the current `expected_revision` and 1–256 `cycles` entries. Each entry has a Boolean `reset` and an `inputs` object containing the design's input names and decimal or hexadecimal strings. The first entry asserts reset.
+
+The 3-bit accumulator and its delayed output matched Rust and Icarus across six cycles, covering initial reset, wraparound, simultaneous register updates and a second reset. ALU SAT proofs and sampled combinational RTL verification continue to apply to combinational circuits. The sampled waveform view and VCD export are available as described below.
+
+The macOS release app displayed the accumulator feedback on the native GPU canvas. Moving the register advanced the revision, and the reset and clock controls showed the expected samples in the Results panel.
+
+
+## Sample cursor and VCD
+
+The Rust service retains the latest trace in memory, shared by all windows. `simulation.state` accepts an optional cursor and omits unchanged payloads. `simulation.select` takes `expected_revision`, `trace_id`, zero-based `index`, and `radix` (10 or 16). Replaced traces and stale revisions cannot be selected or exported. Results survive WebView remounts, floating and redocking, but are deliberately not persisted across service restarts or included in Undo/checkpoints.
+
+Canvas values are post-edge samples, including combinational nodes, inputs and outputs. Register **Q** is the output after the selected edge. **D** is the settled data input under that sample's inputs; it is not a prediction of the next cycle, whose inputs or reset can differ. Changed revisions remove annotations immediately. The waveform shows inputs/registers/outputs in pages of 12 signals; the cursor and radix are shared, while zoom and signal page are local presentation state.
+
+`simulation.vcd` takes `expected_revision` and `trace_id`, returning `source` and `filename`. The GUI saves through a macOS file dialog (browser preview uses a download). The export includes all IR node signals as `n_<name>`, exact declared widths, and reset. It is a **sampled two-state trace**: sample 0 is already after the mandatory reset edge, and each sample is assigned a synthetic 1 ns interval. There is no pre-reset state, event-level clock, propagation delay, timing simulation, X or Z support. The VCD comment records these limits. Existing waveform tools support VCD; see the [Verilator tracing FAQ](https://veripool.org/guide/latest/faq.html#how-do-i-view-waveforms-aka-dumps-or-traces). Opening the exported files in GTKWave/Surfer has not been tested locally.
+
+Limits: 1–256 cycles, at most 524,288 retained node samples, 4 MiB of serialized stimuli/results, and 12 MiB VCD source. All node values stay in Rust; IPC sends only the selected node values and compact table results, not every node at every cycle or frame data. Rejected runs preserve the previous trace. Inputs outside the unsigned port range are rejected; add/sub arithmetic intentionally wraps modulo 2^width, matching the generated HDL. Explicit conversion nodes, signedness and X/Z are separate roadmap work.
+
+Validation (2026-11-12): Rust unit tests cover sample selection, replacement/revision guards, overflow/reset, VCD values and 64-bit precision. Real Icarus checks compare the generated accumulator/pipeline RTL; an independent VCD reader also matched all 5 node values across 6 cycles (reset, wrap and reset reassertion) against Icarus executing the generated Verilog. Playwright at 1440×960 and 720×540 checks selection, radix, waveform, VCD download, second-window state and stale/rerun behavior with no console errors. Native macOS QA checks GPU values, floating/redocking, splitter resizing, native VCD save, English/Japanese/Simplified Chinese labels and value invalidation after node movement. A native feedback reconnection mismatch discovered during QA was corrected so preview cycle analysis stops at clocked boundaries; purely combinational cycles remain rejected.

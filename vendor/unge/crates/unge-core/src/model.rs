@@ -3,6 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
 pub type Id = Uuid;
+pub const CLOCKED_NODE_PROPERTY: &str = "logic_architecture_studio.clocked";
+
 pub type Properties = BTreeMap<String, serde_json::Value>;
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -186,10 +188,32 @@ impl Graph {
     /// Topological dependency analysis; independent nodes share a layer.
     pub fn layers(&self) -> Result<Vec<Vec<Id>>> {
         let index = GraphIndex::new(self);
+        // Inputs to clocked nodes affect the next state, so they do not
+        // participate in the current cycle's combinational dependency graph.
+        let clocked: BTreeSet<_> = self
+            .nodes
+            .values()
+            .filter(|node| {
+                node.properties
+                    .get(CLOCKED_NODE_PROPERTY)
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(true)
+            })
+            .map(|node| node.id)
+            .collect();
         let mut degree: BTreeMap<_, _> = self
             .nodes
             .keys()
-            .map(|id| (*id, index.incoming.get(id).map_or(0, Vec::len)))
+            .map(|id| {
+                (
+                    *id,
+                    if clocked.contains(id) {
+                        0
+                    } else {
+                        index.incoming.get(id).map_or(0, Vec::len)
+                    },
+                )
+            })
             .collect();
         let mut ready: Vec<_> = degree
             .iter()
@@ -203,6 +227,9 @@ impl Graph {
             for id in &ready {
                 for edge in index.outgoing.get(id).into_iter().flatten() {
                     let target = self.edges[edge].to.node;
+                    if clocked.contains(&target) {
+                        continue;
+                    }
                     let d = degree
                         .get_mut(&target)
                         .ok_or_else(|| Error::Missing(target.to_string()))?;
@@ -243,6 +270,37 @@ impl GraphIndex {
                 .push(edge.id);
         }
         index
+    }
+    /// Only paths within the current combinational evaluation can close a cycle.
+    pub fn would_create_cycle(&self, graph: &Graph, from: Id, to: Id) -> bool {
+        let clocked = |id: &Id| {
+            graph.nodes[id]
+                .properties
+                .get(CLOCKED_NODE_PROPERTY)
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+        };
+        if clocked(&to) {
+            return false;
+        }
+        let mut visited = BTreeSet::new();
+        let mut stack = vec![to];
+        while let Some(id) = stack.pop() {
+            if id == from {
+                return true;
+            }
+            if visited.insert(id) {
+                stack.extend(
+                    self.outgoing
+                        .get(&id)
+                        .into_iter()
+                        .flatten()
+                        .map(|edge| graph.edges[edge].to.node)
+                        .filter(|id| !clocked(id)),
+                );
+            }
+        }
+        false
     }
     pub fn downstream(&self, graph: &Graph, root: Id) -> BTreeSet<Id> {
         let mut visited = BTreeSet::new();
@@ -353,4 +411,13 @@ impl Document {
         self.validate()?;
         Ok(serde_json::to_string_pretty(self)?)
     }
+}
+
+/// World-space dots shared by the renderer and drag snapping.
+pub fn grid_spacing(zoom: f32) -> f32 {
+    if zoom < 0.3 { 120.0 } else { 24.0 }
+}
+/// Round half toward positive infinity, matching the WebView's Math.round.
+pub fn snap_to_grid(value: f32, spacing: f32) -> f32 {
+    (value / spacing + 0.5).floor() * spacing
 }

@@ -138,6 +138,78 @@ fn native_circuit_renders_three_languages() {
         assert!(device.pop_error_scope().await.is_none());
     });
 }
+#[test]
+#[ignore = "Requires a real GPU and system fonts"]
+fn smallest_lod_role_gallery() {
+    pollster::block_on(async {
+        let adapter = wgpu::Instance::default()
+            .request_adapter(&Default::default())
+            .await
+            .unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        let mut source = design_core::Document::demo();
+        source.edges.retain(|_| false);
+        source.nodes.retain(|_| false);
+        use design_core::Kind::*;
+        for (i, kind) in [Input, Output, Add, Sub, And, Or, Xor, Not, Mux, Register]
+            .into_iter()
+            .enumerate()
+        {
+            source.nodes.push(design_core::Node {
+                id: format!("n{i}"),
+                name: format!("n{i}"),
+                kind,
+                width: 32,
+                x: 200. + (i % 5) as f32 * 720.,
+                y: 300. + (i / 5) as f32 * 1100.,
+            });
+        }
+        let (doc, catalog, ids) = studio_renderer::project(&source).unwrap();
+        let index = SceneIndex::new(&doc);
+        let view = Viewport {
+            origin: [0., 0.],
+            zoom: 0.3,
+            size: [1280., 800.],
+        };
+        let scene = index
+            .scene_with_theme(
+                view,
+                &BTreeSet::from([ids["n2"]]),
+                &Default::default(),
+                &catalog,
+                Locale::Ja,
+                Theme::Dark,
+            )
+            .unwrap();
+        let mut gpu = GpuRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+        let pixels = render(&device, &queue, &mut gpu, &scene, view);
+        assert_eq!(gpu.text_stats().missing_glyphs, 0);
+        for node in &source.nodes {
+            let x = ((node.x + 40.) * view.zoom) as usize;
+            let y = ((node.y + 40.) * view.zoom) as usize;
+            let p = &pixels[(y * 1280 + x) * 4..][..3];
+            assert!(
+                p.iter().max().unwrap() - p.iter().min().unwrap() > 20,
+                "role fill must be chromatic"
+            );
+            let x0 = (node.x * view.zoom) as usize;
+            let y0 = (node.y * view.zoom) as usize;
+            let white = (y0..y0 + 86)
+                .flat_map(|y| (x0..x0 + 86).map(move |x| (y * 1280 + x) * 4))
+                .filter(|&i| pixels[i..i + 3].iter().all(|&v| v > 235))
+                .count();
+            assert!(white > 20, "large white symbol: {:?}", node.kind);
+        }
+        if let Ok(dir) = std::env::var("LAS_GPU_SNAPSHOT") {
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut f = std::fs::File::create(format!("{dir}/tiny-gallery.ppm")).unwrap();
+            write!(f, "P6\n1280 800\n255\n").unwrap();
+            for p in pixels.as_chunks::<4>().0 {
+                f.write_all(&p[..3]).unwrap();
+            }
+        }
+    });
+}
 fn render(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -191,4 +263,93 @@ fn render(
     let pixels = buffer.slice(..).get_mapped_range().to_vec();
     buffer.unmap();
     pixels
+}
+
+#[test]
+#[ignore = "Requires a real GPU and system fonts"]
+fn wires_and_ports_survive_zoom_boundaries_and_subpixel_panning() {
+    pollster::block_on(async {
+        let adapter = wgpu::Instance::default()
+            .request_adapter(&Default::default())
+            .await
+            .unwrap();
+        let (device, queue) = adapter.request_device(&Default::default()).await.unwrap();
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut gpu = GpuRenderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb);
+        for width in [1, 32] {
+            for zoom in [0.02, 0.1, 0.299, 0.3, 0.349, 0.35, 0.599, 0.6, 1.0] {
+                let mut source = design_core::Document::demo();
+                source.nodes.retain(|_| false);
+                source.edges.retain(|_| false);
+                for (id, kind, x) in [
+                    ("in0", design_core::Kind::Input, 0.),
+                    ("out0", design_core::Kind::Output, 288. + 200. / zoom),
+                ] {
+                    source.nodes.push(design_core::Node {
+                        id: id.into(),
+                        name: id.into(),
+                        kind,
+                        width,
+                        x,
+                        y: 0.,
+                    });
+                }
+                source.edges.push(design_core::Edge {
+                    id: "link0".into(),
+                    from: "in0".into(),
+                    to: "out0".into(),
+                    port: "a".into(),
+                });
+                let (doc, mut labels, _) = studio_renderer::project(&source).unwrap();
+                labels.get_mut("in0").unwrap().color = Some([0, 255, 0]);
+                let index = SceneIndex::new(&doc);
+                for phase in [0., 0.25, 0.5, 0.75] {
+                    let view = Viewport {
+                        origin: [288. - 320. / zoom, 144. - (240. + phase) / zoom],
+                        zoom,
+                        size: [1280., 800.],
+                    };
+                    let scene = index
+                        .scene_with_theme(
+                            view,
+                            &BTreeSet::new(),
+                            &Default::default(),
+                            &labels,
+                            Locale::En,
+                            Theme::Dark,
+                        )
+                        .unwrap();
+                    assert!(
+                        scene.quads.iter().any(|q| q.rect[0] == 288.
+                            && q.rect[1] == 144.
+                            && q.params[2] < 0.
+                            && q.rect[2] == q.rect[3]
+                            && q.rect[2] * zoom >= 2.99),
+                        "visible source port at zoom {zoom}"
+                    );
+                    let pixels = render(&device, &queue, &mut gpu, &scene, view);
+                    for x in 350..490 {
+                        let green = (237..244).any(|y| {
+                            let p = &pixels[(y * 1280 + x) * 4..][..3];
+                            p[1] > 120 && p[1].saturating_sub(p[0]) > 70
+                        });
+                        assert!(
+                            green,
+                            "wire gap: width={width}, zoom={zoom}, phase={phase}, x={x}"
+                        );
+                    }
+                    if let Ok(dir) = std::env::var("LAS_GPU_SNAPSHOT") {
+                        std::fs::create_dir_all(&dir).unwrap();
+                        let mut f = std::fs::File::create(format!("{dir}/wire-{width}-{zoom}.ppm"))
+                            .unwrap();
+                        write!(f, "P6\n1280 800\n255\n").unwrap();
+                        for p in pixels.as_chunks::<4>().0 {
+                            f.write_all(&p[..3]).unwrap();
+                        }
+                    }
+                }
+            }
+        }
+        assert!(device.pop_error_scope().await.is_none());
+    });
 }

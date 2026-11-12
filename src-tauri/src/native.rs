@@ -8,6 +8,7 @@ use tauri::{Emitter, EventLoopMessage, Manager};
 use tauri_runtime_wry::tao::{
     event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ControlFlow, EventLoopProxy, EventLoopWindowTarget},
+    keyboard::ModifiersState,
 };
 use tauri_runtime_wry::{
     Context, EventLoopIterationContext, Message, Plugin, PluginBuilder, WebContextStore,
@@ -18,6 +19,7 @@ pub struct Native {
     pub view: EditorView,
     pub position: Option<[f32; 2]>,
     pub down: bool,
+    pub modifiers: ModifiersState,
     pub graph_rect: [f32; 4],
     pub dirty: bool,
     pub source: Option<Arc<design_core::Document>>,
@@ -76,10 +78,26 @@ pub fn redraw(app: &tauri::AppHandle) {
         return;
     };
     if n.view.ids.is_empty() {
-        n.view.viewport.zoom = (rect[2] / 1160.).min(rect[3] / 740.).clamp(0.02, 16.);
+        let min_x = doc.nodes.iter().map(|node| node.x).fold(0., f32::min) - 30.;
+        let min_y = doc.nodes.iter().map(|node| node.y).fold(0., f32::min) - 30.;
+        let max_x = doc
+            .nodes
+            .iter()
+            .map(|node| node.x + design_core::NODE_WIDTH)
+            .fold(0., f32::max)
+            + 30.;
+        let max_y = doc
+            .nodes
+            .iter()
+            .map(|node| node.y + design_core::node_height(&node.kind))
+            .fold(0., f32::max)
+            + 30.;
+        n.view.viewport.zoom = (rect[2] / (max_x - min_x))
+            .min(rect[3] / (max_y - min_y))
+            .clamp(0.02, 1.);
         n.view.viewport.origin = [
-            -30. - rect[0] / n.view.viewport.zoom,
-            -30. - rect[1] / n.view.viewport.zoom,
+            min_x - rect[0] / n.view.viewport.zoom,
+            min_y - rect[1] / n.view.viewport.zoom,
         ];
     } else if n.graph_rect != rect {
         // Keep the visible graph anchored when dock strips change size.
@@ -93,14 +111,22 @@ pub fn redraw(app: &tauri::AppHandle) {
             n.source = Some(doc.clone());
         }
         if n.selection_cursor != snapshot.cursor {
-            n.view.selection = s["selected"]
-                .as_str()
-                .and_then(|id| n.view.ids.get(id))
-                .copied()
+            n.view.selection = s["selection"]
+                .as_array()
+                .map(|ids| ids.iter().filter_map(|id| id.as_str()).collect::<Vec<_>>())
+                .unwrap_or_else(|| s["selected"].as_str().into_iter().collect())
                 .into_iter()
+                .filter_map(|id| n.view.ids.get(id).copied())
                 .collect();
             n.selection_cursor = snapshot.cursor.clone();
         }
+    }
+    if n.frame
+        .as_ref()
+        .is_none_or(|previous| previous.0 != snapshot.cursor)
+    {
+        n.renderer
+            .set_node_colors(serde_json::from_value(s["node_colors"].clone()).unwrap_or_default());
     }
     n.dirty = false;
     n.frame = Some(frame);
@@ -113,6 +139,7 @@ pub fn redraw(app: &tauri::AppHandle) {
         s["locale"].as_str().unwrap_or("ja"),
         view,
         [size.width, size.height],
+        s["revision"].as_u64().unwrap_or(0),
     );
     if result.is_ok() {
         super::measurement::native(app, s["revision"].as_u64().unwrap_or(0));
@@ -184,6 +211,9 @@ impl Plugin<EventLoopMessage> for Input {
         n.dirty |= !matches!(event, WindowEvent::CursorMoved { .. }) || n.down;
         let mut input = None;
         match event {
+            WindowEvent::ModifiersChanged(modifiers) => {
+                n.modifiers = *modifiers;
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 let p = [position.x as f32, position.y as f32];
                 if p[0] >= n.graph_rect[0]
@@ -216,7 +246,9 @@ impl Plugin<EventLoopMessage> for Input {
                             } else {
                                 PointerButton::Pan
                             },
-                            additive: false,
+                            additive: n.modifiers.shift_key()
+                                || n.modifiers.super_key()
+                                || n.modifiers.control_key(),
                         });
                     } else if n.down {
                         n.down = false;
@@ -239,7 +271,12 @@ impl Plugin<EventLoopMessage> for Input {
                         .zoom_at(p, (dy.clamp(-400., 400.) * 0.002).exp());
                 }
             }
-            WindowEvent::Focused(false) | WindowEvent::CursorLeft { .. } => {
+            WindowEvent::Focused(false) => {
+                n.modifiers = ModifiersState::empty();
+                n.down = false;
+                input = Some(PointerEvent::Cancel);
+            }
+            WindowEvent::CursorLeft { .. } => {
                 n.down = false;
                 input = Some(PointerEvent::Cancel);
             }
@@ -263,16 +300,30 @@ impl Plugin<EventLoopMessage> for Input {
                         let moving = ops.iter().any(|op| {
                             matches!(op, design_core::Operation::UpdateNode { x: Some(_), .. })
                         });
-                        let request = if ops.is_empty() {
-                            n.view
-                                .selected()
-                                .filter(|id| Some(id.as_str()) != s["selected"].as_str())
-                                .filter(|_| !n.view.interaction.is_active())
-                                .map(|id| studio_service::Request {
-                                    method: "view.focus_module".into(),
-                                    args: json!({"id":id}),
-                                    actor: "native".into(),
+                        if !n.view.interaction.is_active() {
+                            let ids = n.view.selected_ids();
+                            let previous = s["selection"]
+                                .as_array()
+                                .map(|ids| {
+                                    ids.iter().filter_map(|id| id.as_str()).collect::<Vec<_>>()
                                 })
+                                .unwrap_or_else(|| s["selected"].as_str().into_iter().collect());
+                            if ids.iter().map(String::as_str).collect::<Vec<_>>() != previous {
+                                let request = studio_service::Request {
+                                    method: "view.command".into(),
+                                    args: json!({"method":"view.select_nodes","args":{"expected_revision":rev,"ids":ids}}),
+                                    actor: "native".into(),
+                                };
+                                if let Err(error) = studio_service::call(&root.0, &request) {
+                                    eprintln!("Native selection: {error}");
+                                    n.selection_cursor.clear();
+                                }
+                                super::sync::wake(&self.app);
+                                let _ = self.app.emit("design-changed", ());
+                            }
+                        }
+                        let request = if ops.is_empty() {
+                            None
                         } else {
                             Some(studio_service::Request {
                                 method: "design.apply_patch".into(),
@@ -319,6 +370,7 @@ impl Plugin<EventLoopMessage> for Input {
                     Err(e) => {
                         eprintln!("Native gesture: {e}");
                         n.view.interaction = Default::default();
+                        n.selection_cursor.clear();
                     }
                 }
             }

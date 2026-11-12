@@ -1,5 +1,36 @@
 import type { Locale } from "./types";
 const en = {
+  preferences: "Preferences",
+  appearance: "Appearance",
+  nodeColors: "Node colors",
+  restoreColors: "Reset colors",
+  restoreColor: "Reset color",
+  applyPreferences: "Apply",
+  discardChanges: "Discard changes",
+  savedPreferences: "Saved",
+  unsavedPreferences: "Unsaved changes",
+  savingPreferences: "Saving…",
+  colorHex: "Hex color",
+  colorInvalid: "Enter a color in #RRGGBB format.",
+  preferencesScope:
+    "Saved in this workspace. Colors apply to node headers, ports, outgoing wires and overview symbols.",
+  colorPicker: "Choose color",
+
+  simulationSemantics:
+    "Unsigned, two-state (0/1). Arithmetic wraps modulo 2^width. Inputs must fit their width. Reset is required before stepping; X/Z and timing are not modeled.",
+  postEdge:
+    "Values after the selected rising edge. Q is the current register output; D is its settled input under this cycle’s inputs, not the next cycle’s prediction. VCD uses synthetic 1 ns per sample.",
+  staleResults: "Design changed — results are out of date",
+  rerun: "Rerun",
+  radix: "Radix",
+  waveform: "Waveform",
+  exportVcd: "Export sampled VCD",
+  sample: "Sample",
+  signals: "Signals",
+  numericSemantics: "Unsigned · 0/1",
+  wrapSemantics: "Wrap modulo 2^width",
+  resetSemantics: "Rising edge · synchronous active-high reset to 0",
+
   importProject: "Open design",
   exportProject: "Save design",
   architecture: "Architecture",
@@ -59,6 +90,8 @@ const en = {
   gpu: "GPU geometry view",
   gpuHint:
     "Native Rust / wgpu geometry preview. Labels and editing remain in the main view.",
+  multiSelectHint:
+    "Shift/⌘/Ctrl-click to select multiple nodes, or drag empty space to box-select (up to 512). Drag a selected node to move the group. Right/middle-drag to pan. The grabbed node’s top-left snaps to the dots; group offsets are preserved.",
   connectHint:
     "Select an output port, then an input port. Click a wire to remove it in connection mode.",
   contract:
@@ -66,6 +99,16 @@ const en = {
   installed: "Installed",
   missing: "Not installed",
   synthesize: "Synthesize",
+  registerKind: "Register",
+  cycleTrace: "Cycle trace",
+  resetTrace: "Reset",
+  clockStep: "Clock edge",
+  formalInfo:
+    "Checks the ALU result against the built-in contract for every binary input.",
+  inconclusive: "Inconclusive",
+  counterexample: "Counterexample",
+  proved: "Proved",
+  proveAlu: "Prove ALU",
   verifyRtl: "Test RTL",
   rtlMatch: "RTL / Rust",
   rtlContract: "Contract",
@@ -123,6 +166,37 @@ const en = {
 };
 type Dictionary = typeof en;
 const ja: Dictionary = {
+  preferences: "環境設定",
+  appearance: "アピアランス",
+  nodeColors: "ノード種別カラー",
+  restoreColors: "既定色に戻す",
+  restoreColor: "この色をリセット",
+  applyPreferences: "適用",
+  discardChanges: "変更を取り消す",
+  savedPreferences: "保存済み",
+  unsavedPreferences: "未保存の変更",
+  savingPreferences: "保存中…",
+  colorHex: "カラーコード",
+  colorInvalid: "#RRGGBB形式で入力してください。",
+  preferencesScope:
+    "このワークスペースに保存します。カラーはノードのヘッダー、ポート、出力側の配線、最小表示へ反映します。",
+  colorPicker: "色を選択",
+
+  simulationSemantics:
+    "符号なし・2値（0/1）。演算結果は指定ビット幅で折り返します。入力は幅の範囲内で指定してください。ステップ前にリセットが必要です。X/Zと伝搬遅延は扱いません。",
+  postEdge:
+    "選択した立ち上がりエッジ後の値です。Qはレジスタの現在値、Dはそのサイクルの入力で確定したデータ入力です。次サイクルの予測値ではありません。VCDは1サンプルを仮の1 nsで表します。",
+  staleResults: "回路が変更されています — 結果を再実行してください",
+  rerun: "再実行",
+  radix: "数値表記",
+  waveform: "波形",
+  exportVcd: "サンプル波形をVCD出力",
+  sample: "サンプル",
+  signals: "信号",
+  numericSemantics: "符号なし · 0/1",
+  wrapSemantics: "指定幅で折り返し（mod 2^width）",
+  resetSemantics: "立ち上がり · 同期Highリセット → 0",
+
   importProject: "設計を開く",
   exportProject: "設計を保存",
   architecture: "アーキテクチャ",
@@ -182,6 +256,8 @@ const ja: Dictionary = {
   gpu: "GPUジオメトリ表示",
   gpuHint:
     "Rust / wgpuのネイティブ描画プレビュー。ラベルと編集操作はメイン画面で行います。",
+  multiSelectHint:
+    "Shift／⌘／Ctrl＋クリック、または余白のドラッグで複数選択（最大512ノード）。選択中のノードをドラッグすると一括移動。右／中ボタンのドラッグでパン。つかんだノードの左上がドットに吸着し、複数選択の相対位置を保ちます。",
   connectHint:
     "出力ポート、入力ポートの順に選択します。接続モードで配線をクリックすると解除します。",
   contract:
@@ -189,6 +265,16 @@ const ja: Dictionary = {
   installed: "導入済み",
   missing: "未導入",
   synthesize: "論理合成",
+  registerKind: "レジスタ",
+  cycleTrace: "サイクルトレース",
+  resetTrace: "リセット",
+  clockStep: "クロック立ち上がり",
+  formalInfo:
+    "ALUの結果を、すべての二値入力について組み込みの演算仕様と照合します。",
+  inconclusive: "判定不能",
+  counterexample: "反例あり",
+  proved: "証明成立",
+  proveAlu: "ALUを形式検証",
   verifyRtl: "RTLを検証",
   rtlMatch: "RTL / Rust",
   rtlContract: "期待値",
@@ -245,6 +331,37 @@ const ja: Dictionary = {
     "外部MCPも同じワークスペースに接続します。既定では読み取り専用です。",
 };
 const zh: Dictionary = {
+  preferences: "偏好设置",
+  appearance: "外观",
+  nodeColors: "节点类型颜色",
+  restoreColors: "恢复默认颜色",
+  restoreColor: "重置此颜色",
+  applyPreferences: "应用",
+  discardChanges: "放弃更改",
+  savedPreferences: "已保存",
+  unsavedPreferences: "未保存的更改",
+  savingPreferences: "正在保存…",
+  colorHex: "颜色代码",
+  colorInvalid: "请输入 #RRGGBB 格式的颜色。",
+  preferencesScope:
+    "保存在当前工作区。颜色应用于节点标题、端口、输出连线和缩略视图。",
+  colorPicker: "选择颜色",
+
+  simulationSemantics:
+    "无符号、二值（0/1）。运算结果按位宽回绕。输入值必须在位宽范围内。步进前必须复位；不模拟X/Z和传播延迟。",
+  postEdge:
+    "所选上升沿后的值。Q是寄存器当前输出；D是该周期输入下稳定的数据输入，不是下一周期的预测值。VCD每个采样点使用虚拟1 ns。",
+  staleResults: "电路已更改 — 请重新运行",
+  rerun: "重新运行",
+  radix: "进制",
+  waveform: "波形",
+  exportVcd: "导出采样VCD",
+  sample: "采样",
+  signals: "信号",
+  numericSemantics: "无符号 · 0/1",
+  wrapSemantics: "按位宽回绕（mod 2^width）",
+  resetSemantics: "上升沿 · 同步高电平复位 → 0",
+
   importProject: "打开设计",
   exportProject: "保存设计",
   architecture: "架构",
@@ -303,12 +420,23 @@ const zh: Dictionary = {
   language: "语言",
   gpu: "GPU 几何视图",
   gpuHint: "Rust / wgpu 原生几何预览。标签和编辑操作保留在主视图。",
+  multiSelectHint:
+    "按住 Shift/⌘/Ctrl 点击可多选，或拖动空白区域框选（最多512个节点）。拖动已选节点可整体移动。右键或中键拖动可平移。拖动节点的左上角吸附到网格点，保持多选节点间的相对位置。",
   connectHint: "先选择输出端口，再选择输入端口。在连接模式下点击连线即可断开。",
   contract:
     "ALU 规范：op 0 = ADD、1 = AND、2/3 = XOR。320 个固定种子测试向量，仅为行为验证，不是形式证明。",
   installed: "已安装",
   missing: "未安装",
   synthesize: "综合",
+  registerKind: "寄存器",
+  cycleTrace: "周期轨迹",
+  resetTrace: "复位",
+  clockStep: "时钟上升沿",
+  formalInfo: "对所有二进制输入，将 ALU 输出与内置运算规范比较。",
+  inconclusive: "结论未定",
+  counterexample: "发现反例",
+  proved: "证明成立",
+  proveAlu: "形式验证 ALU",
   verifyRtl: "验证RTL",
   rtlMatch: "RTL / Rust",
   rtlContract: "预期值",

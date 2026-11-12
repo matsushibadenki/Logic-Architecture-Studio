@@ -347,6 +347,94 @@ fn run_engine_source(
     Ok(result)
 }
 
+pub fn prove_alu(root: &Path, revision: u64, doc: &Document) -> Result<Value, String> {
+    let width = design_core::alu_width(doc)?;
+    let source = doc.rtl()?;
+    let yosys = super::executable("yosys").ok_or("Yosys is not installed")?;
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let dir = root.join(format!(".logic/runs/formal-{revision}-{timestamp}"));
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let dir = dir.canonicalize().map_err(|error| error.to_string())?;
+    let high_bit = width - 1;
+    let module = &doc.name;
+    let miter = format!(
+        "module __las_alu_miter(input [{high_bit}:0] a, b, input [1:0] op, output mismatch);
+         wire [{high_bit}:0] actual;
+         reg [{high_bit}:0] expected;
+         las_{module} dut(.n_a(a), .n_b(b), .n_op(op), .n_result(actual));
+         always @* begin
+             case (op)
+                 2'd0: expected = a + b;
+                 2'd1: expected = a & b;
+                 default: expected = a ^ b;
+             endcase
+         end
+         assign mismatch = actual != expected;
+         endmodule"
+    );
+    let script = "read_verilog design.v miter.v
+prep -top __las_alu_miter -flatten
+sat -timeout 25 -set-def-inputs -prove mismatch 0 -verify -show a -show b -show op -show actual -show expected -dump_json counterexample.json";
+    for (name, content) in [
+        ("design.v", source.as_str()),
+        ("miter.v", &miter),
+        ("prove.ys", script),
+    ] {
+        fs::write(dir.join(name), content).map_err(|error| error.to_string())?;
+    }
+    let outcome = execute(
+        &yosys,
+        &["-Q", "-s", "prove.ys"],
+        &dir,
+        "yosys.log",
+        Instant::now() + Duration::from_secs(30),
+    );
+    let output = log(&dir, "yosys.log");
+    let witness = File::open(dir.join("counterexample.json"))
+        .ok()
+        .and_then(|file| serde_json::from_reader::<_, Value>(file.take(64 * 1024)).ok())
+        .and_then(|wave| {
+            let signals = wave["signal"].as_array()?;
+            let mut values = BTreeMap::new();
+            for (name, bits) in [
+                ("a", width),
+                ("b", width),
+                ("op", 2),
+                ("actual", width),
+                ("expected", width),
+            ] {
+                let signal = signals.iter().find(|signal| signal["name"] == name)?;
+                let binary = signal["data"][0].as_str()?;
+                if binary.len() != usize::from(bits) {
+                    return None;
+                }
+                let value = u64::from_str_radix(binary, 2).ok()?;
+                values.insert(name, format!("0x{value:x}"));
+            }
+            (values["actual"] != values["expected"]).then_some(values)
+        });
+    let status = match &outcome {
+        Ok(true) if output.contains("SAT proof finished - no model found: SUCCESS!") => "proved",
+        Ok(false) if witness.is_some() && output.contains("proof did fail") => "counterexample",
+        _ => "inconclusive",
+    };
+    let result = json!({
+        "revision": revision, "engine": "Yosys SAT", "status": status,
+        "contract": "alu", "width": width,
+        "counterexample": witness, "artifact_directory": dir,
+        "error": outcome.err(), "log": output.chars().take(256 * 1024).collect::<String>(),
+    });
+    fs::write(
+        dir.join("result.json"),
+        serde_json::to_vec_pretty(&result).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -549,6 +637,298 @@ mod tests {
         assert_eq!(result["success"], true, "{result}");
         assert_eq!(service.state.lock().unwrap().revision, 0);
     }
+    #[test]
+    #[ignore = "Requires installed Yosys"]
+    fn formal_alu_proves_and_returns_counterexample() {
+        let root = Root::new("formal");
+        let service = crate::Service::open(&root.0).unwrap();
+        let request = |revision| crate::Request {
+            method: "verify.formal".into(),
+            args: json!({"expected_revision": revision}),
+            actor: "test".into(),
+        };
+        assert!(service.execute(request(1)).is_err());
+        let result = service.execute(request(0)).unwrap();
+        assert_eq!(result["status"], "proved", "{result}");
+        assert_eq!(service.state.lock().unwrap().revision, 0);
+
+        let mut doc = Document::demo();
+        for node in doc.nodes.iter_mut() {
+            if node.id != "op" {
+                node.width = 64;
+            }
+        }
+        let result = prove_alu(&root.0, 0, &doc).unwrap();
+        assert_eq!(result["status"], "proved", "{result}");
+        doc.nodes
+            .iter_mut()
+            .find(|node| node.id == "add")
+            .unwrap()
+            .kind = Kind::Sub;
+        let result = prove_alu(&root.0, 1, &doc).unwrap();
+        assert_eq!(result["status"], "counterexample", "{result}");
+        let witness = &result["counterexample"];
+        let value = |name: &str| design_core::number(witness[name].as_str().unwrap()).unwrap();
+        assert_eq!(value("op"), 0);
+        assert_eq!(value("actual"), value("a").wrapping_sub(value("b")));
+        assert_eq!(value("expected"), value("a").wrapping_add(value("b")));
+    }
+
+    fn next_sample(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
+    }
+
+    fn generated_circuit(seed: u64, widths: [u8; 2]) -> (Document, Vec<TestVector>) {
+        let mut state = seed;
+        let mut nodes = Vec::new();
+        let mut edges = Vec::new();
+        for (lane, width) in widths.into_iter().enumerate() {
+            let mut available = Vec::new();
+            let selector = format!("sel_{lane}");
+            for index in 0..3 {
+                let name = format!("input_{lane}_{index}");
+                available.push(name.clone());
+                nodes.push(design_core::Node {
+                    id: name.clone(),
+                    name,
+                    kind: Kind::Input,
+                    width,
+                    x: 0.,
+                    y: 0.,
+                });
+            }
+            nodes.push(design_core::Node {
+                id: selector.clone(),
+                name: selector.clone(),
+                kind: Kind::Input,
+                width: 2,
+                x: 0.,
+                y: 0.,
+            });
+            for (index, kind) in [
+                Kind::Add,
+                Kind::Sub,
+                Kind::And,
+                Kind::Or,
+                Kind::Xor,
+                Kind::Not,
+                Kind::Mux,
+                Kind::Output,
+                Kind::Output,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let name = format!("gate_{lane}_{index}");
+                let node = design_core::Node {
+                    id: name.clone(),
+                    name,
+                    kind,
+                    width,
+                    x: 0.,
+                    y: 0.,
+                };
+                for (port_index, (port, _)) in node.inputs().into_iter().enumerate() {
+                    let source = if port == "sel" {
+                        &selector
+                    } else if port_index == 0 && index != 8 {
+                        available.last().unwrap()
+                    } else {
+                        &available[(next_sample(&mut state) as usize) % available.len()]
+                    };
+                    edges.push(design_core::Edge {
+                        id: format!("edge_{}", edges.len()),
+                        from: source.clone(),
+                        to: node.id.clone(),
+                        port: port.into(),
+                    });
+                }
+                if node.kind != Kind::Output {
+                    available.push(node.id.clone());
+                }
+                nodes.push(node);
+            }
+        }
+        // Reverse document order to exercise forward references and output ordering.
+        nodes.reverse();
+        let doc = Document {
+            name: format!("seed_{seed:x}"),
+            nodes: nodes.into(),
+            edges: edges.into(),
+        };
+        let vectors = (0..64)
+            .map(|index| {
+                let inputs: BTreeMap<_, _> = doc
+                    .nodes
+                    .iter()
+                    .filter(|node| node.kind == Kind::Input)
+                    .map(|node| {
+                        let value = if node.name.starts_with("sel_") {
+                            index % 4
+                        } else {
+                            match index {
+                                0..=3 => 0,
+                                4..=7 => u64::MAX,
+                                _ => next_sample(&mut state),
+                            }
+                        };
+                        (node.name.clone(), value)
+                    })
+                    .collect();
+                let expected = doc.evaluate(&inputs).unwrap();
+                TestVector {
+                    inputs: inputs
+                        .into_iter()
+                        .map(|(name, value)| (name, format!("0x{value:x}")))
+                        .collect(),
+                    expected: expected
+                        .into_iter()
+                        .map(|(name, value)| (name, value.to_string()))
+                        .collect(),
+                }
+            })
+            .collect();
+        (doc, vectors)
+    }
+
+    #[test]
+    #[ignore = "Requires installed Icarus, Verilator and C++ compiler"]
+    fn seeded_multi_output_circuits_match_both_simulators() {
+        let root = Root::new("seeded");
+        for (seed, widths) in [(0xa103, [3, 17]), (0xb729, [7, 33]), (0xc451, [31, 63])] {
+            let (doc, vectors) = generated_circuit(seed, widths);
+            for result in [
+                run(&root.0, 0, &doc, &vectors),
+                run_verilator(&root.0, 0, &doc, &vectors),
+            ] {
+                let result = result.unwrap();
+                assert_eq!(
+                    result["success"], true,
+                    "seed {seed:x}, widths {widths:?}: {result}"
+                );
+                assert_eq!(result["rtl_passed"], 64);
+            }
+        }
+    }
+    #[test]
+    #[ignore = "Requires installed Icarus"]
+    fn sequential_feedback_reset_and_pipeline_match_generated_rtl() {
+        let root = Root::new("sequential");
+        let nodes = [
+            ("inc", Kind::Input),
+            ("sum", Kind::Add),
+            ("acc", Kind::Register),
+            ("delay", Kind::Register),
+            ("result", Kind::Output),
+        ]
+        .into_iter()
+        .map(|(name, kind)| design_core::Node {
+            id: name.into(),
+            name: name.into(),
+            kind,
+            width: 3,
+            x: 0.,
+            y: 0.,
+        })
+        .collect::<Vec<_>>();
+        let edges = [
+            ("inc", "sum", "a"),
+            ("acc", "sum", "b"),
+            ("sum", "acc", "d"),
+            ("acc", "delay", "d"),
+            ("delay", "result", "a"),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, (from, to, port))| design_core::Edge {
+            id: format!("edge_{index}"),
+            from: from.into(),
+            to: to.into(),
+            port: port.into(),
+        })
+        .collect::<Vec<_>>();
+        let doc = Document {
+            name: "accumulator".into(),
+            nodes: nodes.into(),
+            edges: edges.into(),
+        };
+        let mut workspace = design_core::Workspace::default();
+        workspace.document = std::sync::Arc::new(doc.clone());
+        workspace
+            .dispatch(
+                "layout.auto_arrange",
+                json!({"expected_revision":0}),
+                "test",
+            )
+            .unwrap();
+        assert!(doc.evaluate(&BTreeMap::new()).is_err());
+        assert!(doc.simulate_cycles(&[]).is_err());
+        let cycles = [
+            (true, 3),
+            (false, 3),
+            (false, 3),
+            (false, 3),
+            (true, 7),
+            (false, 7),
+        ];
+        let payload =
+            cycles.map(|(reset, inc)| json!({"reset":reset,"inputs":{"inc":inc.to_string()}}));
+        let response = workspace
+            .dispatch(
+                "simulation.cycles",
+                json!({"expected_revision":1,"cycles":payload}),
+                "test",
+            )
+            .unwrap();
+        let samples = response["samples"].as_array().unwrap();
+        let expected = ["0 0", "3 0", "6 3", "1 6", "0 0", "7 0"];
+        for (sample, expected) in samples.iter().zip(expected) {
+            assert_eq!(
+                format!(
+                    "{} {}",
+                    sample["registers"]["acc"].as_str().unwrap(),
+                    sample["outputs"]["result"].as_str().unwrap()
+                ),
+                expected
+            );
+        }
+        fs::write(root.0.join("design.v"), doc.rtl().unwrap()).unwrap();
+        let mut bench = String::from("module tb; reg clk=0, rst; reg [2:0] inc; wire [2:0] result; las_accumulator dut(.las_clk(clk), .las_reset(rst), .n_inc(inc), .n_result(result)); initial begin\n");
+        for (reset, inc) in cycles {
+            bench += &format!("rst={}; inc={inc}; #1; clk=1; #1; $display(\"%0d %0d\", dut.n_acc, result); clk=0; #1;\n", u8::from(reset));
+        }
+        bench += "end endmodule";
+        fs::write(root.0.join("tb.v"), bench).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        assert!(
+            execute(
+                &super::super::executable("iverilog").unwrap(),
+                &["-s", "tb", "-o", "sim.vvp", "design.v", "tb.v"],
+                &root.0,
+                "compile.log",
+                deadline
+            )
+            .unwrap(),
+            "{}",
+            log(&root.0, "compile.log")
+        );
+        assert!(execute(
+            &super::super::executable("vvp").unwrap(),
+            &["sim.vvp"],
+            &root.0,
+            "sim.log",
+            deadline
+        )
+        .unwrap());
+        assert_eq!(
+            log(&root.0, "sim.log").lines().collect::<Vec<_>>(),
+            expected
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     #[ignore = "Requires child processes"]

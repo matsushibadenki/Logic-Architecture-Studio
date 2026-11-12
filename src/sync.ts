@@ -57,7 +57,9 @@ const setKeys = new Set([
   "can_redo",
   "report",
   "selected",
+  "selection",
   "locale",
+  "node_colors",
   "panels",
   "diagnostics",
 ]);

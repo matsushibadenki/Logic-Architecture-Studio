@@ -14,6 +14,7 @@ pub enum Kind {
     Xor,
     Not,
     Mux,
+    Register,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -45,6 +46,23 @@ pub struct Diagnostic {
     pub code: String,
     pub node: Option<String>,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CycleInput {
+    pub reset: bool,
+    pub inputs: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CycleSample {
+    /// Post-edge values keyed by stable node ID, retained in Rust for annotation.
+    #[serde(skip_serializing)]
+    pub values: BTreeMap<String, u64>,
+    pub reset: bool,
+    pub outputs: BTreeMap<String, String>,
+    pub registers: BTreeMap<String, String>,
 }
 
 pub fn valid_identifier(s: &str) -> bool {
@@ -89,21 +107,47 @@ pub fn valid_identifier(s: &str) -> bool {
         ]
         .contains(&s)
 }
-impl Node {
-    pub fn inputs(&self) -> Vec<(&'static str, u8)> {
-        match self.kind {
-            Kind::Input => vec![],
-            Kind::Output | Kind::Not => vec![("a", self.width)],
-            Kind::Mux => vec![
-                ("d0", self.width),
-                ("d1", self.width),
-                ("d2", self.width),
-                ("sel", 2),
-            ],
-            _ => vec![("a", self.width), ("b", self.width)],
+impl Kind {
+    pub fn key(&self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::Output => "output",
+            Self::Add => "add",
+            Self::Sub => "sub",
+            Self::And => "and",
+            Self::Or => "or",
+            Self::Xor => "xor",
+            Self::Not => "not",
+            Self::Mux => "mux",
+            Self::Register => "register",
+        }
+    }
+
+    pub fn input_names(&self) -> &'static [&'static str] {
+        match self {
+            Self::Input => &[],
+            Self::Register => &["d"],
+            Self::Output | Self::Not => &["a"],
+            Self::Mux => &["d0", "d1", "d2", "sel"],
+            _ => &["a", "b"],
         }
     }
 }
+pub const NODE_WIDTH: f32 = 288.;
+/// Square by default. Leave room for the header, footer and each port row.
+pub fn node_height(kind: &Kind) -> f32 {
+    NODE_WIDTH.max((kind.input_names().len().max(1) + 1) as f32 * 64.)
+}
+impl Node {
+    pub fn inputs(&self) -> Vec<(&'static str, u8)> {
+        self.kind
+            .input_names()
+            .iter()
+            .map(|&name| (name, if name == "sel" { 2 } else { self.width }))
+            .collect()
+    }
+}
+
 impl Document {
     pub fn encoded_len(&self) -> usize {
         b"{\"name\":,\"nodes\":,\"edges\":}".len()
@@ -114,14 +158,14 @@ impl Document {
 
     pub fn demo() -> Self {
         let specs = [
-            ("a", Kind::Input, 32, 40., 100.),
-            ("b", Kind::Input, 32, 40., 290.),
-            ("op", Kind::Input, 2, 40., 490.),
-            ("add", Kind::Add, 32, 310., 70.),
-            ("bit_and", Kind::And, 32, 310., 250.),
-            ("bit_xor", Kind::Xor, 32, 310., 430.),
-            ("select", Kind::Mux, 32, 610., 240.),
-            ("result", Kind::Output, 32, 890., 270.),
+            ("a", Kind::Input, 32, 40., 80.),
+            ("b", Kind::Input, 32, 40., 400.),
+            ("op", Kind::Input, 2, 40., 720.),
+            ("add", Kind::Add, 32, 400., 70.),
+            ("bit_and", Kind::And, 32, 400., 390.),
+            ("bit_xor", Kind::Xor, 32, 400., 710.),
+            ("select", Kind::Mux, 32, 760., 380.),
+            ("result", Kind::Output, 32, 1120., 400.),
         ];
         let nodes = specs
             .into_iter()
@@ -260,6 +304,9 @@ impl Document {
         let mut degree: BTreeMap<String, usize> =
             self.nodes.iter().map(|n| (n.id.clone(), 0)).collect();
         for e in &self.edges {
+            if self.node(&e.to)?.kind == Kind::Register {
+                continue;
+            }
             *degree.get_mut(&e.to).ok_or("Unknown target")? += 1;
         }
         let mut ready: Vec<String> = degree
@@ -270,6 +317,9 @@ impl Document {
         let mut order = vec![];
         while let Some(id) = ready.pop() {
             for e in self.edges.iter().filter(|e| e.from == id) {
+                if self.node(&e.to)?.kind == Kind::Register {
+                    continue;
+                }
                 let d = degree.get_mut(&e.to).unwrap();
                 *d -= 1;
                 if *d == 0 {
@@ -288,22 +338,50 @@ impl Document {
         &self,
         inputs: &BTreeMap<String, u64>,
     ) -> Result<BTreeMap<String, u64>, String> {
+        self.require_combinational()?;
         self.validate(true)?;
+        Ok(self.outputs(&self.evaluate_values(inputs, &BTreeMap::new(), &self.order()?)?))
+    }
+    pub fn require_combinational(&self) -> Result<(), String> {
+        if self.nodes.iter().any(|node| node.kind == Kind::Register) {
+            return Err("Sequential circuit requires cycle simulation".into());
+        }
+        Ok(())
+    }
+    pub fn evaluate_signals(
+        &self,
+        inputs: &BTreeMap<String, u64>,
+    ) -> Result<BTreeMap<String, u64>, String> {
+        self.require_combinational()?;
+        self.validate(true)?;
+        self.evaluate_values(inputs, &BTreeMap::new(), &self.order()?)
+    }
+    fn evaluate_values(
+        &self,
+        inputs: &BTreeMap<String, u64>,
+        registers: &BTreeMap<String, u64>,
+        order: &[String],
+    ) -> Result<BTreeMap<String, u64>, String> {
+        let drivers: BTreeMap<_, _> = self
+            .edges
+            .iter()
+            .map(|edge| ((edge.to.as_str(), edge.port.as_str()), &edge.from))
+            .collect();
         let mut values: BTreeMap<String, u64> = BTreeMap::new();
-        for id in self.order()? {
-            let n = self.node(&id)?;
-            let get = |port: &str| -> u64 {
-                let e = self
-                    .edges
-                    .iter()
-                    .find(|e| e.to == id && e.port == port)
-                    .unwrap();
-                values[&e.from]
-            };
+        for id in order {
+            let n = self.node(id)?;
+            let get = |port: &str| values[drivers[&(id.as_str(), port)]];
             let value = match n.kind {
-                Kind::Input => *inputs
-                    .get(&n.name)
-                    .ok_or_else(|| format!("Missing input: {}", n.name))?,
+                Kind::Input => {
+                    let value = *inputs
+                        .get(&n.name)
+                        .ok_or_else(|| format!("Missing input: {}", n.name))?;
+                    if value > mask(n.width) {
+                        return Err(format!("Input {} exceeds unsigned {}-bit range; use an explicit width conversion", n.name, n.width));
+                    }
+                    value
+                }
+                Kind::Register => registers[id],
                 Kind::Output => get("a"),
                 Kind::Add => get("a").wrapping_add(get("b")),
                 Kind::Sub => get("a").wrapping_sub(get("b")),
@@ -317,20 +395,91 @@ impl Document {
                     _ => get("d2"),
                 },
             };
-            values.insert(id, value & mask(n.width));
+            values.insert(id.clone(), value & mask(n.width));
         }
-        Ok(self
-            .nodes
+        Ok(values)
+    }
+    fn outputs(&self, values: &BTreeMap<String, u64>) -> BTreeMap<String, u64> {
+        self.nodes
             .iter()
             .filter(|n| n.kind == Kind::Output)
             .map(|n| (n.name.clone(), values[&n.id]))
-            .collect())
+            .collect()
+    }
+    pub fn simulate_cycles(&self, cycles: &[CycleInput]) -> Result<Vec<CycleSample>, String> {
+        self.validate(true)?;
+        if cycles.len().saturating_mul(self.nodes.len()) > 524_288 {
+            return Err("Trace exceeds 524288 node samples; use fewer cycles".into());
+        }
+        if cycles.is_empty() || cycles.len() > 256 || !cycles[0].reset {
+            return Err("Supply 1–256 cycles, starting with reset".into());
+        }
+        let order = self.order()?;
+        let register_inputs = self
+            .edges
+            .iter()
+            .filter(|edge| {
+                self.node(&edge.to)
+                    .is_ok_and(|node| node.kind == Kind::Register)
+            })
+            .collect::<Vec<_>>();
+        if register_inputs.is_empty() {
+            return Err("Cycle simulation requires a register".into());
+        }
+        let mut registers = register_inputs
+            .iter()
+            .map(|edge| (edge.to.clone(), 0))
+            .collect();
+        let mut samples = Vec::with_capacity(cycles.len());
+        for cycle in cycles {
+            let inputs = cycle
+                .inputs
+                .iter()
+                .map(|(name, value)| Ok((name.clone(), crate::number(value)?)))
+                .collect::<Result<BTreeMap<_, _>, String>>()?;
+            if inputs.len()
+                != self
+                    .nodes
+                    .iter()
+                    .filter(|node| node.kind == Kind::Input)
+                    .count()
+            {
+                return Err("Supply exactly the design inputs each cycle".into());
+            }
+            let before = self.evaluate_values(&inputs, &registers, &order)?;
+            registers = register_inputs
+                .iter()
+                .map(|edge| {
+                    (
+                        edge.to.clone(),
+                        if cycle.reset { 0 } else { before[&edge.from] },
+                    )
+                })
+                .collect();
+            let after = self.evaluate_values(&inputs, &registers, &order)?;
+            samples.push(CycleSample {
+                values: after.clone(),
+                reset: cycle.reset,
+                outputs: self
+                    .outputs(&after)
+                    .into_iter()
+                    .map(|(name, value)| (name, value.to_string()))
+                    .collect(),
+                registers: self
+                    .nodes
+                    .iter()
+                    .filter(|node| node.kind == Kind::Register)
+                    .map(|node| (node.name.clone(), registers[&node.id].to_string()))
+                    .collect(),
+            });
+        }
+        Ok(samples)
     }
     pub fn rtl(&self) -> Result<String, String> {
         self.validate(true)?;
         // Prefix every user identifier; this also prevents collisions with HDL keywords.
         let signal = |id: &str| format!("n_{}", self.node(id).unwrap().name);
-        let ports: Vec<_> = self
+        let mut ports: Vec<_> = self
             .nodes
             .iter()
             .filter(|n| matches!(n.kind, Kind::Input | Kind::Output))
@@ -347,6 +496,12 @@ impl Document {
                 )
             })
             .collect();
+        if self.nodes.iter().any(|node| node.kind == Kind::Register) {
+            ports.extend([
+                "  input wire las_clk".into(),
+                "  input wire las_reset".into(),
+            ]);
+        }
         let mut rtl = format!(
             "// Generated by Logic Architecture Studio\nmodule las_{} (\n{}\n);\n",
             self.name,
@@ -354,7 +509,12 @@ impl Document {
         );
         for n in &self.nodes {
             if !matches!(n.kind, Kind::Input | Kind::Output) {
-                rtl += &format!("  wire [{}:0] n_{};\n", n.width - 1, n.name);
+                let storage = if n.kind == Kind::Register {
+                    "reg"
+                } else {
+                    "wire"
+                };
+                rtl += &format!("  {storage} [{}:0] n_{};\n", n.width - 1, n.name);
             }
         }
         for id in self.order()? {
@@ -372,6 +532,15 @@ impl Document {
                         .from,
                 )
             };
+            if n.kind == Kind::Register {
+                rtl += &format!(
+                    "  always @(posedge las_clk) {} <= las_reset ? {}'d0 : {};\n",
+                    signal(&id),
+                    n.width,
+                    get("d")
+                );
+                continue;
+            }
             let expr = match n.kind {
                 Kind::Output => get("a"),
                 Kind::Not => format!("~{}", get("a")),

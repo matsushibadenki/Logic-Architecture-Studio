@@ -1,5 +1,14 @@
 export type Kind =
-  "input" | "output" | "add" | "sub" | "and" | "or" | "xor" | "not" | "mux";
+  | "input"
+  | "output"
+  | "add"
+  | "sub"
+  | "and"
+  | "or"
+  | "xor"
+  | "not"
+  | "mux"
+  | "register";
 export type Locale = "en" | "ja" | "zh";
 export interface Node {
   id: string;
@@ -48,25 +57,25 @@ export interface Snapshot {
   report: Report | null;
   experiments: Experiment[];
   selected: string | null;
+  selection?: string[];
   locale: Locale;
+  node_colors?: Partial<Record<Kind, string>>;
   panels: Record<string, string>;
   diagnostics: { code: string; node: string; message: string }[];
 }
 export type Operation = Record<string, unknown>;
+export function inputPortNames(kind: Kind): string[] {
+  if (kind === "input") return [];
+  if (kind === "register") return ["d"];
+  if (kind === "not" || kind === "output") return ["a"];
+  if (kind === "mux") return ["d0", "d1", "d2", "sel"];
+  return ["a", "b"];
+}
 export function ports(n: Node): [string, number][] {
-  if (n.kind === "input") return [];
-  if (n.kind === "not" || n.kind === "output") return [["a", n.width]];
-  if (n.kind === "mux")
-    return [
-      ["d0", n.width],
-      ["d1", n.width],
-      ["d2", n.width],
-      ["sel", 2],
-    ];
-  return [
-    ["a", n.width],
-    ["b", n.width],
-  ];
+  return inputPortNames(n.kind).map((name) => [
+    name,
+    name === "sel" ? 2 : n.width,
+  ]);
 }
 export const kinds: Kind[] = [
   "input",
@@ -78,6 +87,7 @@ export const kinds: Kind[] = [
   "xor",
   "not",
   "mux",
+  "register",
 ];
 export const symbols: Record<Kind, string> = {
   input: "→",
@@ -89,4 +99,5 @@ export const symbols: Record<Kind, string> = {
   xor: "⊕",
   not: "¬",
   mux: "MUX",
+  register: "D",
 };

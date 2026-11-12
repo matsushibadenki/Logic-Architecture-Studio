@@ -8,7 +8,7 @@ Implemented: 1–64-bit combinational circuit editing, atomic patches, revision 
 
 The default ALU contract is `op=0: ADD`, `1: AND`, `2/3: XOR`. The built-in experiment intentionally mutates ADD→SUB and XOR→OR to demonstrate rejection of incorrect candidates. This is behavioral testing, not formal verification or measured architecture optimization.
 
-Yosys is detected and invoked only when installed. No cell area, delay or power figures are invented. Internal LLM orchestration, MCP client, formal tools, OpenROAD and fabrication flows are unfinished.
+Yosys is detected and invoked only when installed. No cell area, delay or power figures are invented. Internal LLM orchestration, MCP client, OpenROAD and fabrication flows are unfinished.
 
 See [roadmap](../ROADMAP.md), [architecture](ARCHITECTURE.md), [MCP setup](MCP.md), and [UNGE attribution](../THIRD_PARTY_NOTICES.md). Run `npm run build`, `cargo test --workspace --locked`, and `cargo clippy --workspace --all-targets --locked -- -D warnings`. GPU and socket integration tests are explicitly marked ignored and can be selected with `-- --ignored`.
 
@@ -23,3 +23,17 @@ Startup recovery previews valid current/previous checkpoints or resets only dama
 The macOS folder button opens another workspace and remembers the selection. Missing remembered folders open a selection screen rather than creating replacement data. See [workspace selection](WORKSPACES.md).
 
 Generated RTL can be tested in Icarus or Verilator against Rust and an independent vector contract, from Toolchain or MCP `verify.rtl`. See [RTL verification](RTL-VERIFICATION.md).
+
+## Sample cursor and VCD
+
+Select a table row or waveform cursor to annotate all native canvas nodes and wires. Decimal/hex display and post-edge register Q/settled D share a Rust-owned cursor across docked and floating panels. The VCD export contains all node samples; it uses synthetic 1 ns intervals and unsigned two-state semantics, not timing simulation or X/Z. Out-of-range inputs and width-mismatched connections are rejected; arithmetic wrap is explicit in the inspector. See [semantics and validation](RTL-VERIFICATION.md#sample-cursor-and-vcd).
+
+Use Shift/⌘/Ctrl-click to add/remove nodes from the selection, or left-drag empty canvas space to box-select (up to 512 nodes). Drag a selected node to move the group; one Undo restores the entire move. Right/middle-drag pans the canvas. Port labels use 24 world units, twice the previous native size.
+
+Node dragging snaps the grabbed node’s top-left to the visible dots (24 world units, 120 in overview). Group moves preserve relative positions. Clicking alone does not snap; movement within the same grid cell creates no Undo entry.
+
+## Preferences
+
+Open the separate Preferences window with the toolbar gear. The Appearance tab on the left contains language (English, Japanese, Simplified Chinese) and colors for each of the ten node kinds. Choose a color or enter `#RRGGBB`, then Apply. Individual/all-color reset and Discard changes are available.
+
+Preferences are saved in the current workspace and restored on restart. Colors update nodes, ports, outgoing wires, overview symbols, library and inspector without changing the circuit revision or Undo history.

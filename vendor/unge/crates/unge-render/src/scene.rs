@@ -5,10 +5,12 @@ use std::{
     time::Instant,
 };
 use unge_core::{Command, Document, Id, Locale, Rect, SpatialIndex, Viewport, port_anchor};
-use unge_interaction::{MAX_SELECTION, PORT_LOD_ZOOM, Preview};
+use unge_interaction::{MAX_SELECTION, Preview};
 
 const MAX_MOVED_NODES: usize = 1024;
 const MAX_REFIT_EDGES: usize = 4096;
+const NODE_CORNER_RADIUS: f32 = 10.0;
+const SYMBOL_SIZE: f32 = 52.0;
 
 // Spatial queries already return ID order. Retain that order without rebuilding
 // a tree of individual allocations; preview IDs may overlap or arrive unsorted.
@@ -43,17 +45,20 @@ impl Quad {
         }
     }
     fn line(a: [f32; 2], b: [f32; 2], color: [f32; 4]) -> Self {
+        Self::stroke(a, b, color, 3.0)
+    }
+    fn stroke(a: [f32; 2], b: [f32; 2], color: [f32; 4], width: f32) -> Self {
         let dx = b[0] - a[0];
         let dy = b[1] - a[1];
         Self {
             rect: [
                 (a[0] + b[0]) / 2.0,
                 (a[1] + b[1]) / 2.0,
-                dx.hypot(dy).max(0.001) + 3.0,
-                3.0,
+                dx.hypot(dy).max(0.001) + width,
+                width,
             ],
             color,
-            params: [dy.atan2(dx), 1.5, 0.0, 0.0],
+            params: [dy.atan2(dx), width * 0.5, -1.0, 0.0],
         }
     }
 }
@@ -63,10 +68,11 @@ struct RenderNode {
     outputs: usize,
     type_id: String,
     input_names: Vec<String>,
+    required_inputs: Vec<usize>,
     output_names: Vec<String>,
 }
 struct RenderEdge {
-    points: [[f32; 2]; 4],
+    points: [[f32; 2]; 6],
     bounds: Rect,
     source_type: String,
     from: (Id, usize),
@@ -81,6 +87,12 @@ impl RenderNode {
             outputs: node.outputs.len(),
             type_id: node.type_id.clone(),
             input_names: node.inputs.iter().map(|p| p.name.clone()).collect(),
+            required_inputs: node
+                .inputs
+                .iter()
+                .enumerate()
+                .filter_map(|(index, port)| port.required.then_some(index))
+                .collect(),
             output_names: node.outputs.iter().map(|p| p.name.clone()).collect(),
         })
     }
@@ -92,39 +104,34 @@ impl RenderEdge {
         let to = doc.graph().nodes().get(&edge.to.node)?;
         let i = from.outputs.iter().position(|p| p.name == edge.from.port)?;
         let j = to.inputs.iter().position(|p| p.name == edge.to.port)?;
-        let points = curve(
-            port_anchor(
-                doc.placement().get(&from.id).copied().unwrap_or_default(),
-                i,
-                from.outputs.len(),
-                true,
-            ),
-            port_anchor(
-                doc.placement().get(&to.id).copied().unwrap_or_default(),
-                j,
-                to.inputs.len(),
-                false,
-            ),
+        let from_rect = doc.placement().get(&from.id).copied().unwrap_or_default();
+        let to_rect = doc.placement().get(&to.id).copied().unwrap_or_default();
+        let points = orthogonal(
+            port_anchor(from_rect, i, from.outputs.len(), true),
+            port_anchor(to_rect, j, to.inputs.len(), false),
+            from_rect.y + from_rect.height,
+            to_rect.y + to_rect.height,
         );
         Some(Self {
             points,
-            bounds: curve_bounds(points),
+            bounds: route_bounds(points),
             source_type: from.type_id.clone(),
             from: (from.id, i),
             to: (to.id, j),
         })
     }
 }
-type NodeCacheKey = (Rect, bool, u32, u8, Theme, Option<crate::NodeLabels>);
+type NodeCacheKey = (Rect, bool, u32, u8, Theme, Option<crate::NodeLabels>, bool);
 struct CachedNode {
     key: NodeCacheKey,
     quads: Vec<Quad>,
     labels: Vec<TextLabel>,
 }
 struct CachedEdge {
-    points: [[f32; 2]; 4],
+    points: [[f32; 2]; 6],
     zoom: f32,
     color: [f32; 4],
+    width: u8,
     quads: Vec<Quad>,
 }
 #[derive(Debug, Default, Clone, Copy, serde::Serialize)]
@@ -262,15 +269,35 @@ fn curve(a: [f32; 2], b: [f32; 2]) -> [[f32; 2]; 4] {
     let dx = ((b[0] - a[0]).abs() * 0.5).max(50.0);
     [a, [a[0] + dx, a[1]], [b[0] - dx, b[1]], b]
 }
-fn curve_bounds(points: [[f32; 2]; 4]) -> Rect {
+fn orthogonal(a: [f32; 2], b: [f32; 2], from_bottom: f32, to_bottom: f32) -> [[f32; 2]; 6] {
+    if a[0] <= b[0] {
+        let x = (a[0] + b[0]) * 0.5;
+        [a, [x, a[1]], [x, b[1]], b, b, b]
+    } else {
+        let y = from_bottom.max(to_bottom) + 24.0;
+        [
+            a,
+            [a[0] + 18.0, a[1]],
+            [a[0] + 18.0, y],
+            [b[0] - 18.0, y],
+            [b[0] - 18.0, b[1]],
+            b,
+        ]
+    }
+}
+fn route_bounds(points: [[f32; 2]; 6]) -> Rect {
     let min_x = points.iter().map(|p| p[0]).fold(f32::INFINITY, f32::min) - 2.0;
     let max_x = points
         .iter()
         .map(|p| p[0])
         .fold(f32::NEG_INFINITY, f32::max)
         + 2.0;
-    let min_y = points[0][1].min(points[3][1]) - 2.0;
-    let max_y = points[0][1].max(points[3][1]) + 2.0;
+    let min_y = points.iter().map(|p| p[1]).fold(f32::INFINITY, f32::min) - 2.0;
+    let max_y = points
+        .iter()
+        .map(|p| p[1])
+        .fold(f32::NEG_INFINITY, f32::max)
+        + 2.0;
     Rect {
         x: min_x,
         y: min_y,
@@ -278,9 +305,23 @@ fn curve_bounds(points: [[f32; 2]; 4]) -> Rect {
         height: max_y - min_y,
     }
 }
+// World-space geometry with a one framebuffer-pixel lower bound.
+fn wire_width(zoom: f32, bus: bool) -> f32 {
+    (if bus { 4.5_f32 } else { 2.5_f32 }).max(1.0 / zoom)
+}
+fn expanded(rect: Rect, padding: f32) -> Rect {
+    Rect {
+        x: rect.x - padding,
+        y: rect.y - padding,
+        width: rect.width + padding * 2.0,
+        height: rect.height + padding * 2.0,
+    }
+}
 fn push_curve(scene: &mut Scene, points: [[f32; 2]; 4], zoom: f32, color: [f32; 4]) {
     crate::curves::for_each_segment(points, zoom, |a, b| {
-        scene.quads.push(Quad::line(a, b, color));
+        scene
+            .quads
+            .push(Quad::stroke(a, b, color, wire_width(zoom, false)));
     });
 }
 impl SceneIndex {
@@ -532,6 +573,7 @@ impl SceneIndex {
         };
         let mut grid = Quad::rectangle(area, scene.background, 0.0);
         grid.params[2] = 1.0;
+        grid.params[3] = unge_core::grid_spacing(viewport.zoom);
         scene.quads.push(grid);
         let start = TIMED.then(Instant::now);
         for (rect, label) in self.groups.visible(area, preview, |id| {
@@ -563,6 +605,8 @@ impl SceneIndex {
                     },
                     font_size: if rect.height >= 120.0 { 15.0 } else { 14.0 },
                     right_aligned: false,
+                    centered: false,
+                    bold: false,
                     color: palette.text.linear(),
                     after_quad: scene.quads.len(),
                 });
@@ -571,8 +615,12 @@ impl SceneIndex {
         }
         timings.groups_ms = elapsed_ms(start);
         let start = TIMED.then(Instant::now);
+        let cable_area = expanded(
+            area,
+            wire_width(viewport.zoom, true) * 0.5 + 1.0 / viewport.zoom,
+        );
         let edges = visible_ids(
-            self.edge_index.query(area),
+            self.edge_index.query(cable_area),
             preview
                 .placement
                 .keys()
@@ -587,48 +635,51 @@ impl SceneIndex {
             let points = if moved {
                 let from = &self.nodes[&edge.from.0];
                 let to = &self.nodes[&edge.to.0];
-                curve(
-                    port_anchor(
-                        preview
-                            .placement
-                            .get(&edge.from.0)
-                            .copied()
-                            .unwrap_or(from.rect),
-                        edge.from.1,
-                        from.outputs,
-                        true,
-                    ),
-                    port_anchor(
-                        preview
-                            .placement
-                            .get(&edge.to.0)
-                            .copied()
-                            .unwrap_or(to.rect),
-                        edge.to.1,
-                        to.inputs,
-                        false,
-                    ),
+                let from_rect = preview
+                    .placement
+                    .get(&edge.from.0)
+                    .copied()
+                    .unwrap_or(from.rect);
+                let to_rect = preview
+                    .placement
+                    .get(&edge.to.0)
+                    .copied()
+                    .unwrap_or(to.rect);
+                orthogonal(
+                    port_anchor(from_rect, edge.from.1, from.outputs, true),
+                    port_anchor(to_rect, edge.to.1, to.inputs, false),
+                    from_rect.y + from_rect.height,
+                    to_rect.y + to_rect.height,
                 )
             } else {
                 edge.points
             };
             let bounds = if moved {
-                curve_bounds(points)
+                route_bounds(points)
             } else {
                 edge.bounds
             };
-            if !bounds.intersects(area) {
+            if !bounds.intersects(cable_area) {
                 continue;
             }
+            let signal = catalog.get(&edge.source_type);
+            let width = signal.map_or(1, |label| label.signal_width).max(1);
             let color = catalog
                 .get(&edge.source_type)
-                .filter(|labels| labels.tone != crate::NodeTone::Neutral)
-                .map_or(palette.edge, |labels| palette.tone(labels.tone));
-            let color = color.linear();
-            let hit =
-                self.edge_cache.borrow().get(&id).is_some_and(|c| {
-                    c.points == points && c.zoom == viewport.zoom && c.color == color
+                .filter(|labels| labels.color.is_some() || labels.tone != crate::NodeTone::Neutral)
+                .map_or(palette.edge, |labels| {
+                    labels
+                        .color
+                        .map(crate::ThemeColor::new)
+                        .unwrap_or_else(|| palette.tone(labels.tone))
                 });
+            let color = color.linear();
+            let hit = self.edge_cache.borrow().get(&id).is_some_and(|c| {
+                c.points == points
+                    && c.zoom == viewport.zoom
+                    && c.color == color
+                    && c.width == width
+            });
             if hit {
                 scene
                     .quads
@@ -636,29 +687,88 @@ impl SceneIndex {
                 scene.geometry_stats.reused_edges += 1;
             } else {
                 let start = scene.quads.len();
-                push_curve(&mut scene, points, viewport.zoom, color);
+                for segment in points.windows(2) {
+                    if segment[0] != segment[1] {
+                        scene.quads.push(Quad::stroke(
+                            segment[0],
+                            segment[1],
+                            color,
+                            wire_width(viewport.zoom, width > 1),
+                        ));
+                    }
+                }
                 self.edge_cache.borrow_mut().insert(
                     id,
                     CachedEdge {
                         points,
                         zoom: viewport.zoom,
                         color,
+                        width,
                         quads: scene.quads[start..].to_vec(),
                     },
                 );
                 scene.geometry_stats.rebuilt_edges += 1;
             }
+            if viewport.zoom >= 0.7 {
+                // Use a horizontal run outside endpoint nodes. Labels remain derived
+                // metadata so a sample selection never invalidates retained wire geometry.
+                if let Some(segment) = points
+                    .windows(2)
+                    .filter(|p| p[0][1] == p[1][1] && (p[1][0] - p[0][0]).abs() >= 55.0)
+                    .max_by(|a, b| {
+                        (a[1][0] - a[0][0])
+                            .abs()
+                            .total_cmp(&(b[1][0] - b[0][0]).abs())
+                    })
+                {
+                    let x = (segment[0][0] + segment[1][0]) * 0.5;
+                    let y = segment[0][1];
+                    if width > 1 {
+                        scene
+                            .quads
+                            .push(Quad::line([x - 4.0, y + 5.0], [x + 4.0, y - 5.0], color));
+                    }
+                    let mut text = match signal.and_then(|l| l.state.as_ref()) {
+                        Some(value) if width > 1 => format!("/{width} · {value}"),
+                        Some(value) => value.clone(),
+                        None if width > 1 => format!("/{width}"),
+                        None => String::new(),
+                    };
+                    let available = (segment[1][0] - segment[0][0]).abs().min(190.0);
+                    // Never show a clipped numeric value that could be read as a
+                    // different number; the full value remains in the node and trace.
+                    if text.len() as f32 * 7.2 > available {
+                        text = if width > 1 {
+                            format!("/{width}")
+                        } else {
+                            String::new()
+                        };
+                    }
+                    if !text.is_empty() {
+                        scene.labels.push(TextLabel {
+                            text,
+                            rect: Rect {
+                                x: x - available * 0.5,
+                                y: y - 22.0,
+                                width: available,
+                                height: 17.0,
+                            },
+                            font_size: 12.0_f32.max(10.0 / viewport.zoom),
+                            right_aligned: false,
+                            centered: false,
+                            bold: false,
+                            color: palette.text.linear(),
+                            after_quad: scene.quads.len(),
+                        });
+                    }
+                }
+            }
             scene.visible_edges += 1;
         }
         timings.edge_geometry_ms = elapsed_ms(start);
         let start = TIMED.then(Instant::now);
-        // Include ports/selection borders protruding from the node bounds.
-        let padded = Rect {
-            x: area.x - 12.0,
-            y: area.y - 12.0,
-            width: area.width + 24.0,
-            height: area.height + 24.0,
-        };
+        // Keep screen-sized overview ports visible when node bodies are offscreen.
+        let padded = expanded(area, 12.0_f32.max(3.0 / viewport.zoom));
         let nodes = visible_ids(
             self.node_index.query(padded),
             preview.placement.keys().copied(),
@@ -672,10 +782,23 @@ impl SceneIndex {
                 continue;
             }
             let selected = selection.contains(&id);
+            let tiny = viewport.zoom < 0.35;
             let labels = catalog.get(&node.type_id);
-            let tone = palette
-                .tone(labels.map_or(crate::NodeTone::Neutral, |l| l.tone))
+            let tone = labels
+                .and_then(|l| l.color)
+                .map(crate::ThemeColor::new)
+                .unwrap_or_else(|| {
+                    palette.tone(labels.map_or(crate::NodeTone::Neutral, |l| l.tone))
+                })
                 .linear();
+            let missing_input = node.required_inputs.iter().any(|port| {
+                !self
+                    .incident
+                    .get(&id)
+                    .into_iter()
+                    .flatten()
+                    .any(|edge| self.edges[edge].to == (id, *port))
+            });
             let hit = self.node_cache.borrow().get(&id).is_some_and(|c| {
                 c.key.0 == rect
                     && c.key.1 == selected
@@ -683,6 +806,7 @@ impl SceneIndex {
                     && c.key.3 == locale as u8
                     && c.key.4 == theme
                     && c.key.5.as_ref() == labels
+                    && c.key.6 == missing_input
             });
             if hit {
                 let cache = self.node_cache.borrow();
@@ -732,12 +856,18 @@ impl SceneIndex {
                     14.0,
                 ));
             }
+            // Keep the role hue, with enough depth for a white overview symbol.
+            let overview_fill = [tone[0] * 0.32, tone[1] * 0.32, tone[2] * 0.32, 1.0];
             let border = if selected {
                 palette.accent.linear()
+            } else if tiny {
+                overview_fill
             } else {
                 palette.border.linear()
             };
-            scene.quads.push(Quad::rectangle(rect, border, 10.0));
+            scene
+                .quads
+                .push(Quad::rectangle(rect, border, NODE_CORNER_RADIUS));
             let inset = if selected { 2.0 } else { 1.0 };
             scene.quads.push(Quad::rectangle(
                 Rect {
@@ -746,9 +876,42 @@ impl SceneIndex {
                     width: (rect.width - 2.0 * inset).max(0.1),
                     height: (rect.height - 2.0 * inset).max(0.1),
                 },
-                palette.node.linear(),
+                if tiny {
+                    overview_fill
+                } else {
+                    palette.node.linear()
+                },
                 9.0,
             ));
+            if tiny {
+                let symbol = labels.map(|l| l.symbol.as_str()).unwrap_or("?");
+                let symbol = match symbol {
+                    "M" => "MUX",
+                    "|" => "≥1",
+                    "^" => "⊕",
+                    "~" => "¬",
+                    _ => symbol,
+                };
+                let padding = rect.width.min(rect.height) * 0.12;
+                let width = rect.width - padding * 2.0;
+                scene.labels.push(TextLabel {
+                    text: symbol.into(),
+                    rect: Rect {
+                        x: rect.x + padding,
+                        y: rect.y + padding,
+                        width,
+                        height: rect.height - padding * 2.0,
+                    },
+                    font_size: (rect.width.min(rect.height) * 0.58)
+                        .min(width / (symbol.chars().count().max(1) as f32 * 0.72))
+                        .clamp(1.0, 512.0),
+                    right_aligned: false,
+                    centered: true,
+                    bold: true,
+                    color: [1.0; 4],
+                    after_quad: scene.quads.len(),
+                });
+            }
             if viewport.zoom >= 0.6 && rect.width >= 48.0 && rect.height >= 40.0 {
                 // Opaque tint in linear space: inexpensive header separation in both themes.
                 // Keep the existing port anchors and dense-node label clearance unchanged.
@@ -781,23 +944,6 @@ impl SceneIndex {
                     tone,
                     1.0,
                 ));
-                if rect.height >= 120.0
-                    && labels.is_some_and(|l| !l.symbol.is_empty())
-                    && rect.width >= 96.0
-                {
-                    let mut badge = tone;
-                    badge[3] = 0.14;
-                    scene.quads.push(Quad::rectangle(
-                        Rect {
-                            x: rect.x + 10.0,
-                            y: rect.y + 8.0,
-                            width: 22.0,
-                            height: 22.0,
-                        },
-                        badge,
-                        5.0,
-                    ));
-                }
                 if rect.height >= 120.0 {
                     let mut divider = palette.border.linear();
                     divider[3] = 0.25;
@@ -813,69 +959,140 @@ impl SceneIndex {
                     ));
                 }
             }
-            if viewport.zoom >= PORT_LOD_ZOOM {
-                for (count, output) in [(node.inputs, false), (node.outputs, true)] {
-                    for i in 0..count {
-                        let p = port_anchor(rect, i, count, output);
-                        // Ring centres use the exact same anchor as hit testing and cables.
-                        for (radius, color) in
-                            [(6.0, tone), (4.5, palette.node.linear()), (2.5, tone)]
-                        {
-                            scene.quads.push(Quad::rectangle(
-                                Rect {
-                                    x: p[0] - radius,
-                                    y: p[1] - radius,
-                                    width: radius * 2.0,
-                                    height: radius * 2.0,
-                                },
-                                color,
-                                radius,
-                            ));
-                        }
+            if missing_input {
+                let radius = (2.5 / viewport.zoom).clamp(3.0, 10.0);
+                scene.quads.push(Quad::rectangle(
+                    Rect {
+                        x: rect.x + rect.width - radius * 2.0 - 8.0,
+                        y: rect.y + 8.0,
+                        width: radius * 2.0,
+                        height: radius * 2.0,
+                    },
+                    palette.cable_invalid.linear(),
+                    radius,
+                ));
+            }
+            for (count, output) in [(node.inputs, false), (node.outputs, true)] {
+                for i in 0..count {
+                    let p = port_anchor(rect, i, count, output);
+                    // Overview dots retain a 3px diameter. At higher LODs keep
+                    // the ring rim at least 1px, using the same cable anchor.
+                    let outer = 6.0_f32.max(if tiny { 1.5 } else { 2.5 } / viewport.zoom);
+                    let inner = outer - 1.5_f32.max(1.0 / viewport.zoom);
+                    let center = 2.5_f32.max(0.8 / viewport.zoom).min(inner);
+                    let rings = [
+                        (outer, tone),
+                        (inner, palette.node.linear()),
+                        (center, tone),
+                    ];
+                    for &(radius, color) in &rings[..if tiny { 1 } else { 3 }] {
+                        let mut port = Quad::rectangle(
+                            Rect {
+                                x: p[0] - radius,
+                                y: p[1] - radius,
+                                width: radius * 2.0,
+                                height: radius * 2.0,
+                            },
+                            color,
+                            radius,
+                        );
+                        port.params[2] = -1.0;
+                        scene.quads.push(port);
                     }
                 }
             }
             if viewport.zoom >= 0.35 && rect.width >= 48.0 && rect.height >= 40.0 {
                 let labels = catalog.get(&node.type_id);
-                let after_quad = scene.quads.len();
                 let symbol = labels
                     .map(|l| label_text(None, &l.symbol, locale))
                     .unwrap_or_default();
                 let has_symbol = !symbol.is_empty()
                     && rect.height >= 120.0
                     && rect.width >= 96.0
-                    && viewport.zoom >= 0.85;
+                    && viewport.zoom >= 0.35;
                 // Preserve screen-space legibility in an overview. Keep text
                 // within the node; fine port labels yield to title and formula.
                 let title_font = 15.0_f32.max(12.0 / viewport.zoom);
                 let detail_font = 12.0_f32.max(11.0 / viewport.zoom);
                 let title_height = title_font * 1.3;
-                if has_symbol {
-                    scene.labels.push(TextLabel {
-                        text: symbol.chars().take(2).collect(),
-                        rect: Rect {
-                            x: rect.x + 15.0,
-                            y: rect.y + 10.0,
-                            width: 16.0,
-                            height: 18.0,
+                let state = labels.and_then(|l| l.state.as_ref());
+                if has_symbol && state.is_none() {
+                    let center = rect.x + rect.width * 0.5;
+                    let top = rect.y + (rect.height - SYMBOL_SIZE) * 0.5;
+                    let is_register = symbol == "D/Q";
+                    let badge = Rect {
+                        x: center - SYMBOL_SIZE * 0.5,
+                        y: top,
+                        width: SYMBOL_SIZE,
+                        height: SYMBOL_SIZE,
+                    };
+                    scene
+                        .quads
+                        .push(Quad::rectangle(badge, tone, NODE_CORNER_RADIUS));
+                    let mut fill = palette.node.linear();
+                    for channel in 0..3 {
+                        fill[channel] = fill[channel] * 0.86 + tone[channel] * 0.14;
+                    }
+                    scene.quads.push(Quad::rectangle(
+                        Rect {
+                            x: badge.x + 1.5,
+                            y: badge.y + 1.5,
+                            width: SYMBOL_SIZE - 3.0,
+                            height: SYMBOL_SIZE - 3.0,
                         },
-                        font_size: 13.0,
+                        fill,
+                        NODE_CORNER_RADIUS - 1.5,
+                    ));
+                    if is_register {
+                        for (a, b) in [
+                            ([badge.x, top + 30.0], [badge.x + 8.0, top + 35.0]),
+                            ([badge.x + 8.0, top + 35.0], [badge.x, top + 40.0]),
+                        ] {
+                            scene.quads.push(Quad::line(a, b, tone));
+                        }
+                    }
+                    scene.labels.push(TextLabel {
+                        text: if is_register { "D   Q".into() } else { symbol },
+                        rect: badge,
+                        font_size: if is_register { 18.0 } else { 25.0 },
                         right_aligned: false,
+                        centered: true,
+                        bold: true,
+                        color: palette.text.linear(),
+                        after_quad: scene.quads.len(),
+                    });
+                }
+                let after_quad = scene.quads.len();
+                let title_inset = if state.is_some() { 39.0 } else { 12.0 };
+                if state.is_some() {
+                    scene.labels.push(TextLabel {
+                        text: labels.map(|l| l.symbol.clone()).unwrap_or_default(),
+                        rect: Rect {
+                            x: rect.x + 9.0,
+                            y: rect.y + 8.0,
+                            width: 29.0,
+                            height: 20.0,
+                        },
+                        font_size: 12.0,
+                        right_aligned: false,
+                        centered: false,
+                        bold: false,
                         color: tone,
                         after_quad,
                     });
                 }
-                let title_inset = if has_symbol { 40.0 } else { 12.0 };
                 scene.labels.push(TextLabel {
                     text: label_text(labels.map(|v| &v.title), &node.type_id, locale),
                     rect: Rect {
                         x: rect.x + title_inset,
                         y: rect.y + if rect.height >= 120.0 { 5.0 } else { 4.0 },
-                        width: rect.width - title_inset - 12.0,
+                        width: rect.width - title_inset - if missing_input { 32.0 } else { 12.0 },
                         height: title_height,
                     },
                     font_size: title_font,
                     right_aligned: false,
+                    centered: false,
+                    bold: false,
                     color: palette.text.linear(),
                     after_quad,
                 });
@@ -898,22 +1115,74 @@ impl SceneIndex {
                         },
                         font_size: detail_font,
                         right_aligned: false,
+                        centered: false,
+                        bold: false,
                         color: palette.text.linear(),
                         after_quad,
                     });
                 }
-                if viewport.zoom >= 0.85 {
+                if let Some(state) = state {
+                    let is_register = labels.is_some_and(|l| l.symbol == "D/Q");
+                    let value = if is_register {
+                        format!("Q = {state}")
+                    } else {
+                        state.clone()
+                    };
+                    let font = (176.0 / (value.len() as f32 * 0.61)).clamp(11.0, 22.0);
+                    scene.labels.push(TextLabel {
+                        text: value,
+                        rect: Rect {
+                            x: rect.x + 14.0,
+                            y: rect.y + rect.height * 0.5 - 8.0,
+                            width: rect.width - 28.0,
+                            height: 29.0,
+                        },
+                        font_size: font,
+                        right_aligned: false,
+                        centered: false,
+                        bold: false,
+                        color: palette.text.linear(),
+                        after_quad,
+                    });
+                    if let Some(next) = labels.and_then(|l| l.next_state.as_ref()) {
+                        scene.labels.push(TextLabel {
+                            text: format!("D = {next}"),
+                            rect: Rect {
+                                x: rect.x + 14.0,
+                                y: rect.y + rect.height * 0.5 + 20.0,
+                                width: rect.width - 28.0,
+                                height: 18.0,
+                            },
+                            font_size: 12.0,
+                            right_aligned: false,
+                            centered: false,
+                            bold: false,
+                            color: tone,
+                            after_quad,
+                        });
+                    }
+                }
+                if viewport.zoom >= 0.4 {
                     for (names, output) in [(&node.input_names, false), (&node.output_names, true)]
                     {
                         // Dense port rows would overlap; retain circles and omit labels.
-                        if rect.height / ((names.len() + 1) as f32) < 16.0 {
+                        if rect.height / ((names.len() + 1) as f32) < 32.0 {
                             continue;
                         }
                         for (i, name) in names.iter().enumerate() {
-                            let y = port_anchor(rect, i, names.len(), output)[1] - 7.0;
+                            let anchor = port_anchor(rect, i, names.len(), output)[1];
+                            let center = rect.y + rect.height * 0.5;
+                            let mut y = anchor - 15.0;
+                            if state.is_some() {
+                                y = if anchor <= center {
+                                    y.min(center - 43.0)
+                                } else {
+                                    y.max(center + 24.0)
+                                };
+                            }
                             let header_bottom =
                                 rect.y + if rect.height >= 120.0 { 34.0 } else { 23.0 };
-                            if y < header_bottom || y + 14.0 > rect.y + rect.height - 5.0 {
+                            if y < header_bottom || y + 31.0 > rect.y + rect.height - 5.0 {
                                 continue;
                             }
                             let localized = labels.and_then(|v| {
@@ -924,16 +1193,26 @@ impl SceneIndex {
                                 }
                             });
                             scene.labels.push(TextLabel {
-                                text: label_text(localized, name, locale),
-                                rect: Rect {
-                                    x: rect.x + if output { rect.width / 2.0 + 4.0 } else { 12.0 },
-                                    y,
-                                    width: rect.width / 2.0 - 16.0,
-                                    height: 14.0,
+                                text: if viewport.zoom >= 0.65 {
+                                    label_text(localized, name, locale)
+                                } else {
+                                    if output && labels.is_some_and(|label| label.symbol == "D/Q") {
+                                        "q".into()
+                                    } else {
+                                        name.clone()
+                                    }
                                 },
-                                font_size: 11.0,
+                                rect: Rect {
+                                    x: rect.x + if output { rect.width - 116.0 } else { 12.0 },
+                                    y,
+                                    width: 104.0,
+                                    height: 31.0,
+                                },
+                                font_size: 24.0,
                                 right_aligned: output,
-                                color: palette.muted.linear(),
+                                centered: false,
+                                bold: false,
+                                color: palette.text.linear(),
                                 after_quad,
                             });
                         }
@@ -950,6 +1229,7 @@ impl SceneIndex {
                         locale as u8,
                         theme,
                         labels.cloned(),
+                        missing_input,
                     ),
                     quads: scene.quads[qstart..].to_vec(),
                     labels: scene.labels[lstart..]

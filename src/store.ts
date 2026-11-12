@@ -34,6 +34,7 @@ export async function rpc<T = unknown>(
       "project.import",
       "layout.auto_arrange",
       "view.focus_module",
+      "view.select_nodes",
       "view.preferences",
     ].includes(method)
   ) {
@@ -127,6 +128,13 @@ export function patch(operations: Operation[], label: string) {
     operations,
   });
 }
+export function selectNodes(ids: string[]) {
+  if (!state.snapshot) return Promise.resolve();
+  return action("view.select_nodes", {
+    expected_revision: state.snapshot.revision,
+    ids,
+  });
+}
 export function select(id: string) {
   return action("view.focus_module", { id });
 }
@@ -153,3 +161,17 @@ void refresh();
 setInterval(() => {
   if (!state.busy) void refresh();
 }, 800);
+
+export function openPreferences() {
+  if (native) {
+    void nativeAction("preferences_open");
+    return;
+  }
+  window
+    .open(
+      new URL("?preferences=1", location.href).href,
+      "logic-preferences",
+      "width=780,height=680,resizable=yes",
+    )
+    ?.focus();
+}

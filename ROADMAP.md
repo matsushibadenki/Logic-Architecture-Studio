@@ -5,6 +5,13 @@
 - 🔴 [Later] planned, but not the closest next step
 - ⭕️ [Pending] cannot be tested in the dev environment; on hold
 
+## Appearance preferences
+
+- 🟢 [Done] Dedicated singleton Preferences window, opened by the toolbar gear, with left-side Appearance tab and right-side settings.
+- 🟢 [Done] English/Japanese/Simplified Chinese, ten node-kind colors, color picker/hex input, validation, Apply/Discard and individual/all-color reset.
+- 🟢 [Done] Rust-owned per-workspace persistence and WebView/native metadata delta sync; custom colors reach nodes, ports, source wires, overview symbols, library and inspector without circuit/history changes.
+- 🟢 [Done] macOS release QA: separate window open/close/reopen, all three languages, hex edit/apply, invalid-color blocking, discard/reset, scrollable settings with fixed footer, native canvas color changes and restoration after app restart. Automated persistence, atomicity, delta-sharing and retained-cache tests pass.
+
 ## Core / Phase 1
 
 - 🟢 [Done] Rust-owned typed combinational IR, atomic patch validation and revision conflicts.
@@ -23,12 +30,21 @@
 
 ## UI / Rendering
 
+- 🟢 [Done] Smallest zoom level (<0.35) uses full role-colored tiles and large centered bold white symbols; detailed/intermediate layouts retained. All ten node kinds verified with Metal rendering and LOD boundary tests; browser zoom-out/zoom-in transitions visually verified.
+
+- 🟢 [Done] Dot-aligned drag snapping: shared native grid spacing (24 units, 120 in overview), absolute grabbed-node anchor, group offsets preserved, identical preview/commit and zero-change history suppression; SVG grid uses the same origin and spacing. Native group drag/Undo and browser normal/overview snapping verified on screen.
+
+- 🟢 [Done] 24-unit port labels (2× native size), square 288-unit nodes with 64-unit port rows; native Metal label/width/shape QA.
+- 🟢 [Done] Rust-owned multiple selection (Shift/⌘/Ctrl-click and marquee, up to 512 nodes), atomic group drag/Undo, shared selection deltas and persistence; macOS selection/move/Undo/floating/redocking and browser box-select/group-move/Undo QA.
+
 - 🟢 [Done] Editable node graph, ports, connections, inspector, search, pan/zoom, auto layout.
 - 🟢 [Done] English / 日本語 / 简体中文 UI and compact icon controls.
 - 🟢 [Done] Docking menus and drag targets; native floating-panel implementation.
 - 🟢 [Done] Vendored UNGE rendering subset with license notices and no external path dependency.
 - 🟢 [Done] Role-colored headers, symbols, port rings, Bezier cables, selected halo, connection preview and basic zoom detail reduction.
 - 🟢 [Done] Overview readability: minimum screen-space title/formula sizes, high-contrast formulas and bit widths in node titles; macOS zoom-out/zoom-in QA.
+- 🟢 [Done] Zoom-stable wires: minimum 1 framebuffer pixel, thicker 1-bit/bus strokes (2.5/4.5 world units), centered GPU antialiasing, screen-sized overview port dots and zoom-aware viewport padding. Browser fallback mirrors the width/port rules.
+- 🟢 [Done] macOS release zoom-in/out across all three LODs; GPU pixel checks at 2–100% zoom, including 0.3/0.35/0.6 boundaries and four subpixel offsets for 1-bit/bus wires (72 render cases); retained geometry and GPU regressions pass.
 - 🟢 [Done] Rust UNGE scene adapter, GPU labels, native Surface rendering path; no frame IPC.
 - 🟢 [Done] Real Metal GPU offscreen rendering tests for English, Japanese and Simplified Chinese; glyph and pixel checks passed.
 - 🟢 [Done] Browser interaction checks and 18 language/viewport combinations (320–1536 px).
@@ -66,11 +82,21 @@
 - 🟢 [Done] Independent 320-vector ALU contract, custom vectors, exact 64-bit evaluation.
 - 🟢 [Done] Revision-stamped results and stale-result display.
 - 🟢 [Done] Yosys detection and fixed-script synthesis adapter, run artifacts and timeout.
-- ⭕️ [Pending] Real Yosys synthesis execution; tool not installed in this environment.
+- 🟢 [Done] Verified real Yosys synthesis from the macOS GUI and checked the generated JSON netlist.
 - 🟢 [Done] Icarus generated-RTL sampled comparison against Rust and independent contracts, revision guards, bounded execution/artifacts, GUI/MCP entry point and 1/8/32/64-bit real-tool tests; see docs/RTL-VERIFICATION.md.
 - 🟢 [Done] Verilator adapter with explicit GUI/MCP engine selection, shared validation/result protocol and 1/8/32/64-bit differential regression against Icarus; real tool and macOS UI checks in docs/RTL-VERIFICATION.md.
-- 🟠 [Next] Seeded generated-circuit differential regression, multiple-output and irregular-width coverage.
-- 🟠 [Next] Formal verification, sequential state, clock/reset and waveform traces.
+- 🟢 [Done] Seeded differential regression with four outputs per circuit and 3/7/17/31/33/63-bit signals, verified in Icarus and Verilator.
+- 🟢 [Done] Yosys SAT proof of the combinational ALU contract over all binary inputs, with revision checks and reproducible counterexamples.
+- 🟢 [Done] Register nodes, feedback across register boundaries, shared rising-edge clock and synchronous reset, Verilog export, and cycle traces in GUI and MCP.
+- 🟢 [Done] Rust-owned ephemeral simulation traces, revision/trace-guarded sample selection, 10/16-base display and full-node back-annotation (post-edge Q and settled D); sparse retained wire geometry is independent of cursor changes.
+- 🟢 [Done] Sampled waveform view with a shared cursor, horizontal zoom, signal paging and VCD export of all node values; macOS native save dialog and floating/redocking QA.
+- 🟢 [Done] Reject out-of-range unsigned inputs instead of silently truncating; expose two-state unsigned arithmetic/wrap and synchronous-reset semantics in the inspector. Native bus width rejection and clocked feedback reconnection have regression tests.
+- 🟢 [Done] Bus strokes/slashes and width/value labels, prominent stale-result banner and rerun, sequential human-readable node names.
+- 🟠 [Next] Explicit constant/slice/concat and zero/sign extension IR nodes, validated widths and matching HDL/evaluator semantics.
+- 🟠 [Next] Editable per-cycle stimulus tables with CSV import, expected values/assertions and VCD from external RTL simulator runs.
+- 🔴 [Later] Signed types and full X/Z semantics with external simulator alignment; HDL import, hierarchical/parameterized modules, FST, signal grouping and schematic mode switching.
+- ⭕️ [Pending] External GTKWave/Surfer opening and platform-specific VCD save QA beyond macOS; viewers are not installed in this environment.
+- 🟢 [Done] Native schematic symbols, zoom-dependent port ranges, missing-input indicators, orthogonal feedback routes and revision-checked register values on the canvas.
 - 🔴 [Later] PDK-specific mapping, STA, cell area/power and physical evaluation.
 
 ## AI / Experiments / Phases 3–5

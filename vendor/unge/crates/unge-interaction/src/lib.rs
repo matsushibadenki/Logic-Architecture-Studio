@@ -68,6 +68,7 @@ pub struct Preview {
 #[derive(Debug)]
 enum Action {
     Drag {
+        anchor: Id,
         original: BTreeMap<Id, Rect>,
     },
     Box,
@@ -87,14 +88,21 @@ struct Gesture {
     viewport: Viewport,
     selection: BTreeSet<Id>,
     additive: bool,
+    grid: Option<f32>,
     action: Action,
 }
 #[derive(Debug, Default)]
 pub struct Interaction {
     gesture: Option<Gesture>,
     preview: Preview,
+    snap_to_grid: bool,
 }
 impl Interaction {
+    /// The host chooses the policy; a gesture keeps its starting grid spacing.
+    pub fn set_grid_snap(&mut self, enabled: bool) {
+        self.snap_to_grid = enabled;
+    }
+
     pub fn preview(&self) -> &Preview {
         &self.preview
     }
@@ -194,6 +202,7 @@ impl Interaction {
                             }
                             selection.insert(id);
                             Action::Drag {
+                                anchor: id,
                                 original: selection
                                     .iter()
                                     .map(|id| {
@@ -225,6 +234,7 @@ impl Interaction {
                 viewport: *viewport,
                 selection: original_selection,
                 additive,
+                grid: self.snap_to_grid.then(|| grid_spacing(viewport.zoom)),
                 action,
             });
             return Ok(None);
@@ -245,7 +255,7 @@ impl Interaction {
         let g = self.gesture.take().unwrap();
         let preview = std::mem::take(&mut self.preview);
         match g.action {
-            Action::Drag { original } => {
+            Action::Drag { original, .. } => {
                 let commands: Vec<_> = preview
                     .placement
                     .into_iter()
@@ -294,11 +304,20 @@ impl Interaction {
         let point = g.viewport.to_world(position);
         self.preview = Preview::default();
         match &mut g.action {
-            Action::Drag { original } if moved => {
+            Action::Drag { anchor, original } if moved => {
+                let mut offset = delta.map(|d| d / g.viewport.zoom);
+                if let Some(spacing) = g.grid {
+                    let origin = original[anchor];
+                    offset = [
+                        snap_to_grid(origin.x + offset[0], spacing) - origin.x,
+                        snap_to_grid(origin.y + offset[1], spacing) - origin.y,
+                    ];
+                }
+                // Snap the grabbed node, then apply one translation to the group.
                 for (id, rect) in original {
                     let moved = Rect {
-                        x: rect.x + delta[0] / g.viewport.zoom,
-                        y: rect.y + delta[1] / g.viewport.zoom,
+                        x: rect.x + offset[0],
+                        y: rect.y + offset[1],
                         ..*rect
                     };
                     if !moved.valid() {
@@ -440,7 +459,7 @@ fn port_position(doc: &Document, hit: &PortHit) -> [f32; 2] {
     )
 }
 fn connectable(graph: &Graph, a: &PortHit, b: &PortHit) -> bool {
-    if a.output == b.output || a.endpoint.node == b.endpoint.node {
+    if a.output == b.output {
         return false;
     }
     let (from, to) = if a.output {
@@ -463,7 +482,5 @@ fn connectable(graph: &Graph, a: &PortHit, b: &PortHit) -> bool {
             .edges()
             .values()
             .any(|e| e.to == *to && (input.cardinality == Cardinality::Single || e.from == *from))
-        && !GraphIndex::new(graph)
-            .downstream(graph, to.node)
-            .contains(&from.node)
+        && !GraphIndex::new(graph).would_create_cycle(graph, from.node, to.node)
 }

@@ -18,7 +18,7 @@ import {
   TriangleAlert,
   X,
   LoaderCircle,
-  Globe,
+  Settings,
   Activity,
 } from "lucide-react";
 import {
@@ -28,6 +28,7 @@ import {
   clearError,
   native,
   nativeAction,
+  openPreferences,
 } from "./store";
 import { translation, type Key } from "./i18n";
 import { Panel, IconButton, Hint, DropZone } from "./components/ui";
@@ -54,6 +55,11 @@ export default function App() {
   }, [snapshot?.locale]);
   useEffect(() => {
     function keyboard(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+        e.preventDefault();
+        openPreferences();
+        return;
+      }
       if (
         native &&
         (e.metaKey || e.ctrlKey) &&
@@ -143,6 +149,7 @@ export default function App() {
       <main className="native-toolbar">
         <WorkspaceOpener locale={snapshot.locale} showPath disabled={busy} />
         <strong>Logic Architecture Studio</strong>
+        <Hint text={t("multiSelectHint")} />
         <button
           disabled={!snapshot.can_undo}
           onClick={() =>
@@ -186,17 +193,11 @@ export default function App() {
             {t(id as Key)}
           </button>
         ))}
-        <select
-          aria-label={t("language")}
-          value={snapshot.locale}
-          onChange={(e) =>
-            void action("view.preferences", { locale: e.target.value })
-          }
-        >
-          <option value="en">English</option>
-          <option value="ja">日本語</option>
-          <option value="zh">简体中文</option>
-        </select>
+        <IconButton
+          label={t("preferences")}
+          icon={Settings}
+          onClick={openPreferences}
+        />
         {toast}
       </main>
     );
@@ -230,6 +231,7 @@ export default function App() {
         <div className="brand">
           <Cpu size={23} />
           <strong>Logic Architecture Studio</strong>
+          <Hint text={t("multiSelectHint")} />
         </div>
         <span className="header-rule" />
         <span className="project-name">
@@ -428,20 +430,11 @@ export default function App() {
           <Activity size={12} />
           MCP
         </span>
-        <label className="language-picker">
-          <Globe size={12} />
-          <select
-            aria-label={t("language")}
-            value={snapshot.locale}
-            onChange={(e) =>
-              void action("view.preferences", { locale: e.target.value })
-            }
-          >
-            <option value="en">English</option>
-            <option value="ja">日本語</option>
-            <option value="zh">简体中文</option>
-          </select>
-        </label>
+        <IconButton
+          label={t("preferences")}
+          icon={Settings}
+          onClick={openPreferences}
+        />
       </footer>
       {toast}
     </main>

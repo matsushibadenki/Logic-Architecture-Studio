@@ -3,13 +3,14 @@ use serde_json::{json, Value};
 pub fn tools() -> Vec<Value> {
     let revision = json!({"type":"integer","minimum":0});
     let identifier = json!({"type":"string","minLength":1,"maxLength":64});
-    let kind = json!({"enum":["input","output","add","sub","and","or","xor","not","mux"]});
+    let kind =
+        json!({"enum":["input","output","add","sub","and","or","xor","not","mux","register"]});
     let node = json!({"type":"object","required":["id","name","kind","width","x","y"],"additionalProperties":false,"properties":{"id":identifier,"name":identifier,"kind":kind,"width":{"type":"integer","minimum":1,"maximum":64},"x":{"type":"number","minimum":-100000,"maximum":100000},"y":{"type":"number","minimum":-100000,"maximum":100000}}});
-    let edge = json!({"type":"object","required":["id","from","to","port"],"additionalProperties":false,"properties":{"id":identifier,"from":identifier,"to":identifier,"port":{"enum":["a","b","d0","d1","d2","sel"]}}});
+    let edge = json!({"type":"object","required":["id","from","to","port"],"additionalProperties":false,"properties":{"id":identifier,"from":identifier,"to":identifier,"port":{"enum":["a","b","d0","d1","d2","sel","d"]}}});
     let op = json!({"oneOf":[
         {"type":"object","required":["op","node"],"additionalProperties":false,"properties":{"op":{"enum":["add_node"]},"node":node}},
         {"type":"object","required":["op","id"],"additionalProperties":false,"properties":{"op":{"enum":["remove_node","disconnect"]},"id":identifier}},
-        {"type":"object","required":["op","id"],"additionalProperties":false,"properties":{"op":{"enum":["update_node"]},"id":identifier,"name":{"type":["string","null"],"minLength":1,"maxLength":64},"kind":{"enum":["input","output","add","sub","and","or","xor","not","mux",null]},"width":{"type":["integer","null"],"minimum":1,"maximum":64},"x":{"type":["number","null"],"minimum":-100000,"maximum":100000},"y":{"type":["number","null"],"minimum":-100000,"maximum":100000}}},
+        {"type":"object","required":["op","id"],"additionalProperties":false,"properties":{"op":{"enum":["update_node"]},"id":identifier,"name":{"type":["string","null"],"minLength":1,"maxLength":64},"kind":{"enum":["input","output","add","sub","and","or","xor","not","mux","register",null]},"width":{"type":["integer","null"],"minimum":1,"maximum":64},"x":{"type":["number","null"],"minimum":-100000,"maximum":100000},"y":{"type":["number","null"],"minimum":-100000,"maximum":100000}}},
         {"type":"object","required":["op","edge"],"additionalProperties":false,"properties":{"op":{"enum":["connect"]},"edge":edge}}
     ]});
     let vectors = json!({"type":"array","minItems":1,"maxItems":4096,"items":{"type":"object","required":["inputs","expected"],"additionalProperties":false,"properties":{"inputs":{"type":"object","additionalProperties":{"type":"string"}},"expected":{"type":"object","additionalProperties":{"type":"string"}}}}});
@@ -65,10 +66,40 @@ pub fn tools() -> Vec<Value> {
             vec!["id"],
         ),
         (
+            "view.select_nodes",
+            "Select up to 512 nodes in all views; empty IDs clears selection",
+            json!({"expected_revision":revision,"ids":{"type":"array","maxItems":512,"items":identifier}}),
+            vec!["expected_revision","ids"],
+        ),
+        (
             "rtl.generate",
             "Generate synthesizable Verilog from the validated IR",
             empty.clone(),
             vec![],
+        ),
+        (
+            "simulation.cycles",
+            "Simulate rising clock edges with synchronous reset and return register and output samples",
+            json!({"expected_revision":revision,"cycles":{"type":"array","minItems":1,"maxItems":256,"items":{"type":"object","required":["reset","inputs"],"additionalProperties":false,"properties":{"reset":{"type":"boolean"},"inputs":{"type":"object","additionalProperties":{"type":"string"}}}}}}),
+            vec!["expected_revision", "cycles"],
+        ),
+        (
+            "simulation.vcd",
+            "Export current two-state post-edge samples as VCD (synthetic 1 ns/sample, no timing simulation)",
+            json!({"expected_revision":revision,"trace_id":{"type":"string"}}),
+            vec!["expected_revision","trace_id"],
+        ),
+        (
+            "simulation.state",
+            "Read the current ephemeral simulation trace and selected post-edge annotation",
+            json!({"cursor":{"type":["string","null"]}}),
+            vec![],
+        ),
+        (
+            "simulation.select",
+            "Select a sample and number radix without changing the design",
+            json!({"expected_revision":revision,"trace_id":{"type":"string"},"index":{"type":"integer","minimum":0,"maximum":255},"radix":{"enum":[10,16]}}),
+            vec!["expected_revision","trace_id","index","radix"],
         ),
         (
             "simulation.evaluate",
@@ -122,6 +153,12 @@ pub fn tools() -> Vec<Value> {
             "verify.rtl",
             "Compare generated RTL with Rust and the vector contract using Icarus or Verilator; sampled tests, not formal proof",
             json!({"expected_revision":revision,"vectors":vectors,"engine":{"enum":["icarus","verilator"]}}),
+            vec!["expected_revision"],
+        ),
+        (
+            "verify.formal",
+            "Prove generated combinational ALU RTL against the built-in contract for every binary input using Yosys SAT",
+            json!({"expected_revision":revision}),
             vec!["expected_revision"],
         ),
         (

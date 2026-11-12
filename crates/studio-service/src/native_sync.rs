@@ -17,7 +17,14 @@ pub struct Snapshot {
 }
 pub fn filter(delta: &Value) -> Value {
     let mut set = serde_json::Map::new();
-    for key in ["revision", "selected", "locale", "panels"] {
+    for key in [
+        "revision",
+        "selected",
+        "selection",
+        "locale",
+        "node_colors",
+        "panels",
+    ] {
         if let Some(v) = delta["set"].get(key) {
             set.insert(key.into(), v.clone());
         }
@@ -127,7 +134,16 @@ pub fn apply(previous: Option<&Snapshot>, response: &Value) -> Result<Snapshot, 
         .ok_or("Missing native deltas")?
     {
         for (key, value) in delta["set"].as_object().ok_or("Invalid native metadata")? {
-            if !["revision", "selected", "locale", "panels"].contains(&key.as_str()) {
+            if ![
+                "revision",
+                "selected",
+                "selection",
+                "locale",
+                "node_colors",
+                "panels",
+            ]
+            .contains(&key.as_str())
+            {
                 return Err("Unexpected native field".into());
             }
             meta[key] = value.clone();
@@ -163,18 +179,33 @@ mod tests {
         let response = json!({"kind":"snapshot","changed":true,"cursor":"s:0","snapshot":{"document":old.document,"revision":0,"locale":old.locale,"panels":old.panels,"selected":old.selected}});
         let first = apply(None, &response).unwrap();
         let mut new = old.clone();
-        new.dispatch_view("view.preferences", json!({"locale":"en"}), "test")
-            .unwrap();
+        new.dispatch_view(
+            "view.preferences",
+            json!({"locale":"en","node_colors":{"add":"#123456"}}),
+            "test",
+        )
+        .unwrap();
+        new.dispatch_view(
+            "view.select_nodes",
+            json!({"expected_revision":0,"ids":["a","b"]}),
+            "test",
+        )
+        .unwrap();
         let response = json!({"kind":"delta","changed":true,"base":"s:0","cursor":"s:1","deltas":[filter(&crate::delta::between(&old,&new))]});
         let metadata = apply(Some(&first), &response).unwrap();
         assert!(Arc::ptr_eq(&first.document, &metadata.document));
+        assert_eq!(metadata.meta["selection"], json!(["a", "b"]));
+        assert_eq!(metadata.meta["node_colors"]["add"], "#123456");
         old = new.clone();
         new.dispatch_view("design.apply_patch",json!({"expected_revision":0,"label":"Move","operations":[{"op":"update_node","id":"add","x":555.}]}),"test").unwrap();
         let response = json!({"kind":"delta","changed":true,"base":"s:1","cursor":"s:2","deltas":[filter(&crate::delta::between(&old,&new))]});
         let moved = apply(Some(&metadata), &response).unwrap();
         assert_eq!(moved.document, new.document);
         assert!(serde_json::to_vec(&response).unwrap().len() < 500);
-        assert_eq!(first.document.node("add").unwrap().x, 310.);
+        assert_eq!(
+            first.document.node("add").unwrap().x,
+            design_core::Document::demo().node("add").unwrap().x
+        );
         assert!(apply(Some(&first), &response).is_err());
         let malformed = json!({"kind":"delta","changed":true,"base":"s:2","cursor":"s:3","deltas":[{"set":{},"document":{"nodes":{"upsert":[],"remove":[],"order":["missing"]}}}]});
         assert!(apply(Some(&moved), &malformed).is_err());

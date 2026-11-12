@@ -27,6 +27,7 @@ export function IconButton({
 }) {
   return (
     <button
+      type="button"
       className={`icon-button ${active ? "active" : ""}`}
       title={label}
       aria-label={label}

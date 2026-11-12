@@ -21,9 +21,14 @@ impl LabelText {
 pub struct NodeLabels {
     /// Accent shared by the header, ports and outgoing cables.
     pub tone: crate::NodeTone,
+    /// Optional per-node-kind sRGB accent supplied by the host.
+    pub color: Option<[u8; 3]>,
     /// Optional short symbol (two characters maximum) and one-line footer.
     pub symbol: String,
     pub caption: LabelText,
+    pub state: Option<String>,
+    pub next_state: Option<String>,
+    pub signal_width: u8,
     pub title: LabelText,
     /// Keys are stable port identifiers; translations never change connections.
     pub inputs: BTreeMap<String, LabelText>,
@@ -39,6 +44,9 @@ pub struct TextLabel {
     pub rect: Rect,
     pub font_size: f32,
     pub right_aligned: bool,
+    /// Center the visible glyph bounds on both axes within rect.
+    pub centered: bool,
+    pub bold: bool,
     pub color: [f32; 4],
     pub after_quad: usize,
 }

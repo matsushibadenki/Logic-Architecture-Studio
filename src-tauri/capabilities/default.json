@@ -1,1 +1,20 @@
-{"identifier": "default", "description": "Local editor windows", "windows": ["main", "recovery", "workspace-start", "panel-*"], "permissions": ["core:default"], "webviews": ["controls", "panel-*", "split-*"]}
+{
+  "identifier": "default",
+  "description": "Local editor windows",
+  "windows": [
+    "main",
+    "recovery",
+    "workspace-start",
+    "panel-*",
+    "preferences"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-title"
+  ],
+  "webviews": [
+    "controls",
+    "panel-*",
+    "split-*"
+  ]
+}

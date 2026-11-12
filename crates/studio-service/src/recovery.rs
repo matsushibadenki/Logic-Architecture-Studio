@@ -417,7 +417,7 @@ mod tests {
                     .node("add")
                     .unwrap()
                     .x,
-                310.
+                design_core::Document::demo().node("add").unwrap().x
             );
         }
     }

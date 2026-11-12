@@ -19,7 +19,7 @@ pub struct ThemeColor {
     linear: [f32; 4],
 }
 impl ThemeColor {
-    fn new(srgb: [u8; 3]) -> Self {
+    pub fn new(srgb: [u8; 3]) -> Self {
         let [r, g, b] = srgb.map(|v| {
             let srgb = f32::from(v) / 255.0;
             if srgb <= 0.04045 {
