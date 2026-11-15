@@ -28,6 +28,23 @@ fn text(en: &str, ja: &str, zh: &str) -> LabelText {
 }
 fn labels(kind: &Kind) -> (NodeTone, &'static str, LabelText) {
     match kind {
+        Kind::ZeroExtend => (
+            NodeTone::Violet,
+            "ZX",
+            text("Zero extend", "ゼロ拡張", "零扩展"),
+        ),
+        Kind::SignExtend => (
+            NodeTone::Amber,
+            "SX",
+            text("Sign extend", "符号拡張", "符号扩展"),
+        ),
+        Kind::Constant => (NodeTone::Mint, "#", text("Constant", "定数", "常量")),
+        Kind::Slice => (NodeTone::Violet, "[:]", text("Slice", "スライス", "切片")),
+        Kind::Concat => (
+            NodeTone::Violet,
+            "{}",
+            text("y = {hi, lo}", "y = {hi, lo}", "y = {hi, lo}"),
+        ),
         Kind::Input => (NodeTone::Mint, "I", text("Input", "入力", "输入")),
         Kind::Output => (NodeTone::Rose, "O", text("Output", "出力", "输出")),
         Kind::Add => (
@@ -89,9 +106,9 @@ fn node_rect(n: &design_core::Node) -> Rect {
     }
 }
 fn render_node(n: &design_core::Node) -> unge_core::Node {
-    let port = |name: &str, width: u8, required: bool| Port {
+    let port = |name: &str, width: u8, signed: Option<bool>, required: bool| Port {
         name: name.into(),
-        data_type: DataType::Custom(format!("bits{width}")),
+        data_type: DataType::Bits { width, signed },
         cardinality: Cardinality::Single,
         required,
     };
@@ -101,12 +118,12 @@ fn render_node(n: &design_core::Node) -> unge_core::Node {
         inputs: n
             .inputs()
             .into_iter()
-            .map(|(p, w)| port(p, w, true))
+            .map(|(p, w)| port(p, w, n.input_signed(p), true))
             .collect(),
         outputs: if n.kind == Kind::Output {
             vec![]
         } else {
-            vec![port("y", n.width, false)]
+            vec![port("y", n.width, Some(n.signed), false)]
         },
         properties: if n.kind == Kind::Register {
             [(unge_core::CLOCKED_NODE_PROPERTY.into(), true.into())].into()
@@ -129,8 +146,33 @@ fn render_edge(e: &design_core::Edge) -> unge_core::Edge {
     }
 }
 fn node_labels(n: &design_core::Node) -> NodeLabels {
-    let (tone, symbol, caption) = labels(&n.kind);
-    let title = format!("{} · {}b", n.name, n.width);
+    let (tone, symbol, mut caption) = labels(&n.kind);
+    let expression = match &n.config {
+        design_core::NodeConfig::Constant { value } => Some(format!("y = {value}")),
+        design_core::NodeConfig::Slice { lsb, .. } => {
+            Some(format!("y = a[{}:{}]", lsb + n.width - 1, lsb))
+        }
+        design_core::NodeConfig::ZeroExtend { input_width } => Some(format!(
+            "u{input_width} → {}{} · 0",
+            if n.signed { "s" } else { "u" },
+            n.width
+        )),
+        design_core::NodeConfig::SignExtend { input_width } => Some(format!(
+            "s{input_width} → {}{} · MSB",
+            if n.signed { "s" } else { "u" },
+            n.width
+        )),
+        _ => None,
+    };
+    if let Some(expr) = expression {
+        caption = text(&expr, &expr, &expr);
+    }
+    let title = format!(
+        "{} · {}{}",
+        n.name,
+        n.width,
+        if n.signed { "s" } else { "u" }
+    );
     NodeLabels {
         tone,
         color: None,
@@ -149,6 +191,11 @@ fn node_labels(n: &design_core::Node) -> NodeLabels {
                 } else {
                     format!("{p}[{}:0]", w - 1)
                 };
+                let label = if n.input_signed(p) == Some(true) {
+                    format!("{label} s")
+                } else {
+                    label
+                };
                 (p.into(), text(&label, &label, &label))
             })
             .collect(),
@@ -158,6 +205,11 @@ fn node_labels(n: &design_core::Node) -> NodeLabels {
                 port.into()
             } else {
                 format!("{port}[{}:0]", n.width - 1)
+            };
+            let label = if n.signed {
+                format!("{label} s")
+            } else {
+                label
             };
             text(&label, &label, &label)
         })]
@@ -457,7 +509,7 @@ mod tests {
                     assert!((symbol.rect.x + symbol.rect.width / 2. - center[0]).abs() < 0.001);
                     assert!((symbol.rect.y + symbol.rect.height / 2. - center[1]).abs() < 0.001);
                 } else {
-                    assert!(scene.labels.iter().any(|l| l.text == "add · 32b"));
+                    assert!(scene.labels.iter().any(|l| l.text == "add · 32u"));
                     assert!(scene.labels.iter().any(|l| l.text == "y = a + b"));
                 }
             }
@@ -484,7 +536,7 @@ mod tests {
                     .unwrap();
                 let formula = scene.labels.iter().find(|l| l.text == "y = a + b").unwrap();
                 assert!(formula.font_size * zoom >= 11.0 - 0.001);
-                let title = scene.labels.iter().find(|l| l.text == "add · 32b").unwrap();
+                let title = scene.labels.iter().find(|l| l.text == "add · 32u").unwrap();
                 assert!(title.font_size * zoom >= 12.0 - 0.001);
                 assert!(formula.rect.y >= title.rect.y + title.rect.height);
             }

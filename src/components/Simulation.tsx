@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { StimulusTable } from "./StimulusTable";
+import { useEffect, useRef, useState } from "react";
 import {
   Play,
   RefreshCw,
@@ -31,6 +32,7 @@ export function Simulation({
   const t = translation(snapshot.locale);
   const trace = useSimulation();
   const current = trace?.revision === snapshot.revision;
+  const [inputMode, setInputMode] = useState<"manual" | "stimuli">("stimuli");
   const [values, setValues] = useState<Record<string, string>>({});
   const [mode, setMode] = useState<"table" | "wave">("table");
   const sequential = snapshot.document.nodes.some((n) => n.kind === "register");
@@ -59,7 +61,16 @@ export function Simulation({
     });
   async function rerun() {
     if (!trace) return;
-    if (sequential)
+    if (trace.testbench_version != null) {
+      await simulate(
+        trace.external ? "simulation.rtl_testbench" : "simulation.testbench",
+        {
+          ...(trace.external ? { engine: trace.external.engine } : {}),
+          expected_revision: snapshot.revision,
+          expected_version: snapshot.testbench?.version ?? 0,
+        },
+      );
+    } else if (sequential)
       await simulate("simulation.cycles", {
         expected_revision: snapshot.revision,
         cycles: trace.cycles,
@@ -83,56 +94,144 @@ export function Simulation({
   }
   return (
     <div className="simulation-form">
-      <div className="simulation-inputs">
-        {snapshot.document.nodes
-          .filter((n) => n.kind === "input")
-          .map((n) => (
-            <label key={n.id}>
-              {n.name}
-              <input
-                aria-label={`input ${n.name}`}
-                value={values[n.name] ?? "0"}
-                onChange={(e) =>
-                  setValues((v) => ({ ...v, [n.name]: e.target.value }))
-                }
-              />
-              <small>{n.width}u</small>
-            </label>
-          ))}
-        {sequential ? (
-          <>
-            <IconButton
-              label={t("resetTrace")}
-              icon={RefreshCw}
-              disabled={busy}
-              onClick={() => void clock(true)}
-            />
-            <IconButton
-              label={t("clockStep")}
-              icon={Play}
-              disabled={busy || !current || trace!.cycles.length >= 256}
-              onClick={() => void clock(false)}
-            />
-          </>
-        ) : (
-          <IconButton
-            label={t("evaluate")}
-            icon={Play}
-            disabled={busy}
-            onClick={() => void evaluate()}
-          />
-        )}
-        <Hint text={t("simulationSemantics")} />
+      <div className="trace-toolbar" role="tablist" aria-label={t("inputs")}>
+        {(["stimuli", "manual"] as const).map((m) => (
+          <button
+            key={m}
+            role="tab"
+            aria-selected={inputMode === m}
+            className={inputMode === m ? "active" : ""}
+            onClick={() => setInputMode(m)}
+          >
+            {t(m === "stimuli" ? "stimuli" : "manualInputs")}
+          </button>
+        ))}
       </div>
+      <div hidden={inputMode !== "stimuli"}>
+        <StimulusTable snapshot={snapshot} busy={busy} />
+      </div>
+      {inputMode === "manual" && (
+        <div className="simulation-inputs">
+          {snapshot.document.nodes
+            .filter((n) => n.kind === "input")
+            .map((n) => (
+              <label key={n.id}>
+                {n.name}
+                <input
+                  aria-label={`input ${n.name}`}
+                  value={values[n.name] ?? "0"}
+                  onChange={(e) =>
+                    setValues((v) => ({ ...v, [n.name]: e.target.value }))
+                  }
+                />
+                <small>
+                  {n.width}
+                  {n.signed ? "s" : "u"}
+                </small>
+              </label>
+            ))}
+          {sequential ? (
+            <>
+              <IconButton
+                label={t("resetTrace")}
+                icon={RefreshCw}
+                disabled={busy}
+                onClick={() => void clock(true)}
+              />
+              <IconButton
+                label={t("clockStep")}
+                icon={Play}
+                disabled={busy || !current || trace!.cycles.length >= 256}
+                onClick={() => void clock(false)}
+              />
+            </>
+          ) : (
+            <IconButton
+              label={t("evaluate")}
+              icon={Play}
+              disabled={busy}
+              onClick={() => void evaluate()}
+            />
+          )}
+          <Hint text={t("simulationSemantics")} />
+        </div>
+      )}
       {trace && (
         <>
-          {!current && (
+          {(!current ||
+            (trace.testbench_version != null &&
+              trace.testbench_version !== snapshot.testbench?.version)) && (
             <div className="stale-banner" role="status">
-              <strong>{t("staleResults")}</strong>
+              <strong>{t(!current ? "staleResults" : "stimuliChanged")}</strong>
               <button disabled={busy} onClick={() => void rerun()}>
                 <RefreshCw size={14} />
                 {t("rerun")}
               </button>
+            </div>
+          )}
+          <div
+            className={`stimulus-checks ${trace.external && !trace.external.success ? "has-failures" : ""}`}
+          >
+            <strong>
+              {trace.external
+                ? trace.external.engine === "icarus"
+                  ? "Icarus Verilog"
+                  : "Verilator"
+                : "Rust"}
+              {trace.external &&
+                ` · ${t("rustComparison")} ${trace.external.passed}/${trace.external.total}`}
+            </strong>
+            <Hint
+              text={t(
+                trace.external
+                  ? "externalSimulationHint"
+                  : "simulationSemantics",
+              )}
+            />
+            {trace.external &&
+              trace.external.passed !== trace.external.total && (
+                <strong>{t("comparisonFailed")}</strong>
+              )}
+            {!!trace.external?.failures.length && (
+              <div className="stimulus-failures">
+                {trace.external.failures.map((f) => (
+                  <button
+                    key={`${f.cycle}-${f.signal}`}
+                    disabled={busy || !current}
+                    onClick={() => void choose(f.cycle)}
+                  >
+                    {t("sample")} {f.cycle + 1} · {f.signal}: Rust {f.expected}{" "}
+                    / RTL {f.actual}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {trace.checks && (
+            <div
+              className={`stimulus-checks ${trace.checks.failures.length ? "has-failures" : ""}`}
+            >
+              <strong>
+                {t("checks")} ·{" "}
+                {trace.checks.total
+                  ? `${trace.checks.passed}/${trace.checks.total} ${t("passed")}`
+                  : t("noChecks")}
+              </strong>
+              {trace.checks.failures.length > 0 && (
+                <div className="stimulus-failures">
+                  {trace.checks.failures.map((f) => (
+                    <button
+                      key={`${f.cycle}-${f.signal}`}
+                      disabled={busy || !current}
+                      onClick={() => void choose(f.cycle)}
+                    >
+                      {t("sample")} {f.cycle + 1} · {f.signal}:{" "}
+                      {t("expectedValue")} {f.expected} / {t("actualValue")}{" "}
+                      {f.actual}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           <div className="trace-toolbar">
@@ -166,9 +265,11 @@ export function Simulation({
               {t("sample")} {trace.selected + 1} / {trace.samples.length} · r
               {trace.revision}
             </span>
-            <Hint text={t("postEdge")} />
+            <Hint
+              text={t(trace.external ? "externalSimulationHint" : "postEdge")}
+            />
             <IconButton
-              label={t("exportVcd")}
+              label={t(trace.external ? "exportRtlVcd" : "exportVcd")}
               icon={Download}
               disabled={busy || !current}
               onClick={() => void saveVcd()}
@@ -190,7 +291,8 @@ export function Simulation({
                         <th key={signal.id} scope="col">
                           {signal.name}
                           <small>
-                            {signal.width}u ·{" "}
+                            {signal.width}
+                            {signal.signed ? "s" : "u"} ·{" "}
                             {signal.kind === "input"
                               ? t("inputs")
                               : signal.kind === "register"
@@ -232,6 +334,7 @@ export function Simulation({
                               sampleValue(trace, index, signal),
                               trace.radix,
                               signal.width,
+                              signal.signed,
                             )}
                           </td>
                         ))}
@@ -275,6 +378,20 @@ function Waveform({
   const start = Math.min(page, pages - 1) * 12;
   const signals = trace.signals.slice(start, start + 12);
   const width = trace.samples.length * cell;
+  const viewport = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = viewport.current;
+    if (!el) return;
+    const labelWidth =
+      el.querySelector(".wave-row > strong")?.getBoundingClientRect().width ??
+      120;
+    const visible = Math.max(cell, el.clientWidth - labelWidth);
+    const x = trace.selected * cell;
+    if (x < el.scrollLeft) el.scrollLeft = x;
+    else if (x + cell > el.scrollLeft + visible)
+      el.scrollLeft = x + cell - visible;
+  }, [trace.selected, cell, trace.id]);
+
   return (
     <>
       <div className="trace-toolbar">
@@ -305,6 +422,7 @@ function Waveform({
         />
       </div>
       <div
+        ref={viewport}
         className="waveform"
         role="region"
         aria-label={labels.signals}
@@ -330,9 +448,14 @@ function Waveform({
         </div>
         {signals.map((signal) => (
           <div className="wave-row" key={signal.id}>
-            <strong title={`${signal.name} · ${signal.width}u`}>
+            <strong
+              title={`${signal.name} · ${signal.width}${signal.signed ? "s" : "u"}`}
+            >
               {signal.name}
-              <small>{signal.width}u</small>
+              <small>
+                {signal.width}
+                {signal.signed ? "s" : "u"}
+              </small>
             </strong>
             <svg
               width={width}
@@ -371,7 +494,12 @@ function Waveform({
                   <g key={index}>
                     <title>
                       {signal.name} · {labels.sample} {index + 1} ·{" "}
-                      {formatValue(value, trace.radix, signal.width)}
+                      {formatValue(
+                        value,
+                        trace.radix,
+                        signal.width,
+                        signal.signed,
+                      )}
                     </title>
                     {signal.width === 1 ? (
                       <path
@@ -387,12 +515,21 @@ function Waveform({
                           y={24}
                           textLength={Math.min(
                             cell - 18,
-                            formatValue(value, trace.radix, signal.width)
-                              .length * 7.5,
+                            formatValue(
+                              value,
+                              trace.radix,
+                              signal.width,
+                              signal.signed,
+                            ).length * 7.5,
                           )}
                           lengthAdjust="spacingAndGlyphs"
                         >
-                          {formatValue(value, trace.radix, signal.width)}
+                          {formatValue(
+                            value,
+                            trace.radix,
+                            signal.width,
+                            signal.signed,
+                          )}
                         </text>
                       </>
                     )}

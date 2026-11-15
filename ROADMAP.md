@@ -92,10 +92,14 @@
 - 🟢 [Done] Sampled waveform view with a shared cursor, horizontal zoom, signal paging and VCD export of all node values; macOS native save dialog and floating/redocking QA.
 - 🟢 [Done] Reject out-of-range unsigned inputs instead of silently truncating; expose two-state unsigned arithmetic/wrap and synchronous-reset semantics in the inspector. Native bus width rejection and clocked feedback reconnection have regression tests.
 - 🟢 [Done] Bus strokes/slashes and width/value labels, prominent stale-result banner and rerun, sequential human-readable node names.
-- 🟠 [Next] Explicit constant/slice/concat and zero/sign extension IR nodes, validated widths and matching HDL/evaluator semantics.
-- 🟠 [Next] Editable per-cycle stimulus tables with CSV import, expected values/assertions and VCD from external RTL simulator runs.
-- 🔴 [Later] Signed types and full X/Z semantics with external simulator alignment; HDL import, hierarchical/parameterized modules, FST, signal grouping and schematic mode switching.
-- ⭕️ [Pending] External GTKWave/Surfer opening and platform-specific VCD save QA beyond macOS; viewers are not installed in this environment.
+- 🟢 [Done] Constant, slice and two-input concat IR nodes; exact unsigned widths/values, typed configuration, native/WebView ports and inspector, simulation and synthesizable Verilog. Includes 1–64-bit boundary tests, Icarus/Verilator differential checks and macOS editing/restart QA.
+- 🟢 [Done] Explicit zero/sign extension nodes with 1 ≤ input ≤ output ≤ 64 width checks, two’s-complement MSB replication, typed canvas annotations and exact Verilog replication. All 2,080 width pairs, 64-bit boundaries and real Icarus/Verilator checks pass.
+- 🟢 [Done] Circuit-wide signed types, atomic connected-data-path propagation, strict width/signedness checks, negative decimal inputs/constants/expectations and CSV, signed simulation/annotations/waveforms and Verilog declarations. Legacy circuits remain unsigned; explicit extension boundaries and unsigned MUX selectors are preserved.
+- 🟢 [Done] Durable per-cycle stimulus tables (1–256 rows), reset, UTF-8 CSV import/export and exact typed expected-output checks; revision/version guards, shared failure-to-cursor selection and existing canvas/waveform/VCD integration. Rust owns saved tables; edits do not change circuit revisions or Undo history.
+- 🟢 [Done] Run saved stimulus tables with Icarus Verilog or Verilator: signed inputs/expectations, registers, synchronous reset, all-node Rust comparison, separate expectation checks, shared RTL trace/annotations and original simulator VCD export. Real engine tests and macOS execution/save QA pass.
+- 🟠 [Next] Expression assertions and richer failure navigation for saved stimulus tables.
+- 🔴 [Later] Full X/Z semantics with external simulator alignment; HDL import, hierarchical/parameterized modules, FST, signal grouping and schematic mode switching.
+- ⭕️ [Pending] External GTKWave/Surfer opening and platform-specific CSV/VCD save QA beyond macOS; viewers are not installed in this environment.
 - 🟢 [Done] Native schematic symbols, zoom-dependent port ranges, missing-input indicators, orthogonal feedback routes and revision-checked register values on the canvas.
 - 🔴 [Later] PDK-specific mapping, STA, cell area/power and physical evaluation.
 

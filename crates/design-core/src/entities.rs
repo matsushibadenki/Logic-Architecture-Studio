@@ -209,6 +209,8 @@ mod tests {
     fn blocks_share_untouched_entities_and_keep_json_sizes_exact() {
         let nodes: Entities<Node> = (0..2000)
             .map(|i| Node {
+                signed: false,
+                config: Default::default(),
                 id: format!("n{i}"),
                 name: format!("n{i}"),
                 kind: Kind::Input,

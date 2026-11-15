@@ -161,3 +161,27 @@ test("appearance changes share the circuit and history", () => {
   assert.equal(result.history, initial.history);
   assert.equal(result.revision, initial.revision);
 });
+
+test("stimulus table updates share circuit, selection and history", () => {
+  const testbench = {
+    version: 2,
+    rows: [
+      { reset: false, inputs: { a: "18446744073709551615" }, expected: {} },
+    ],
+  };
+  const result = apply([{ set: { testbench } }]);
+  assert.deepEqual(result.testbench, testbench);
+  assert.equal(result.document, initial.document);
+  assert.equal(result.history, initial.history);
+  assert.equal(result.selected, initial.selected);
+});
+
+test("signed DEC and raw HEX preserve boundaries and negative inputs", async () => {
+  const { formatValue } = await import("../src/values.ts");
+  assert.equal(formatValue("-1", 16, 8, true), "0xFF");
+  assert.equal(formatValue("0x80", 10, 8, true), "-128");
+  assert.equal(formatValue("255", 10, 8, false), "255");
+  assert.equal(formatValue("-9223372036854775808", 16, 64, true), "0x8000000000000000");
+  assert.equal(formatValue("0x8000000000000000", 10, 64, true), "-9223372036854775808");
+  assert.equal(formatValue("1", 10, 1, true), "-1");
+});

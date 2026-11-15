@@ -12,9 +12,39 @@ export type Simulation = {
   revision: number;
   selected: number;
   radix: 10 | 16;
+  testbench_version: number | null;
+  external?: {
+    engine: "icarus" | "verilator";
+    total: number;
+    passed: number;
+    success: boolean;
+    artifact_directory: string;
+    failures: {
+      cycle: number;
+      signal: string;
+      expected: string;
+      actual: string;
+    }[];
+  } | null;
+  checks: {
+    total: number;
+    passed: number;
+    failures: {
+      cycle: number;
+      signal: string;
+      expected: string;
+      actual: string;
+    }[];
+  } | null;
   cycles: CycleInput[];
   samples: CycleSample[];
-  signals: { id: string; name: string; kind: Kind; width: number }[];
+  signals: {
+    id: string;
+    name: string;
+    kind: Kind;
+    width: number;
+    signed?: boolean;
+  }[];
   annotation: {
     revision: number;
     values: Record<string, string>;
@@ -91,12 +121,4 @@ export function sampleValue(
       : trace.samples[index].outputs
   )[signal.name];
 }
-export function formatValue(value: string, radix: number, width?: number) {
-  const number = BigInt(value);
-  return radix === 16
-    ? `0x${number
-        .toString(16)
-        .toUpperCase()
-        .padStart(width ? Math.ceil(width / 4) : 1, "0")}`
-    : number.toString();
-}
+export { formatValue } from "./values";

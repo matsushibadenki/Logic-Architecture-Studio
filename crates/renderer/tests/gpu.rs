@@ -156,6 +156,8 @@ fn smallest_lod_role_gallery() {
             .enumerate()
         {
             source.nodes.push(design_core::Node {
+                signed: false,
+                config: Default::default(),
                 id: format!("n{i}"),
                 name: format!("n{i}"),
                 kind,
@@ -286,6 +288,8 @@ fn wires_and_ports_survive_zoom_boundaries_and_subpixel_panning() {
                     ("out0", design_core::Kind::Output, 288. + 200. / zoom),
                 ] {
                     source.nodes.push(design_core::Node {
+                        signed: false,
+                        config: Default::default(),
                         id: id.into(),
                         name: id.into(),
                         kind,

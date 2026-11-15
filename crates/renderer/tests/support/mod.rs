@@ -2,6 +2,8 @@ use design_core::{Document, Edge, Kind, Node};
 pub fn circuit(count: usize) -> Document {
     let nodes = (0..count)
         .map(|i| Node {
+            signed: false,
+            config: Default::default(),
             id: format!("n{i}"),
             name: format!("n{i}"),
             kind: if i < 2 { Kind::Input } else { Kind::Add },

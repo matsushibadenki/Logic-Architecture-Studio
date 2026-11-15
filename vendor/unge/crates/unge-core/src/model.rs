@@ -43,9 +43,20 @@ pub enum DataType {
     Event,
     Any,
     Custom(String),
+    Bits { width: u8, signed: Option<bool> },
 }
 impl DataType {
     pub fn accepts(&self, source: &Self) -> bool {
+        if let (
+            Self::Bits { width, signed },
+            Self::Bits {
+                width: w,
+                signed: s,
+            },
+        ) = (self, source)
+        {
+            return width == w && (signed.is_none() || signed == s);
+        }
         self == source || *self == Self::Any
     }
 }

@@ -31,8 +31,9 @@ fn testbench(
     let mut text = "`timescale 1ns/1ps\nmodule __las_verification_tb;\n".to_string();
     for (i, n) in ports.iter().enumerate() {
         text += &format!(
-            "{} [{}:0] p{i};\n",
+            "{}{} [{}:0] p{i};\n",
             if n.kind == Kind::Input { "reg" } else { "wire" },
+            if n.signed { " signed" } else { "" },
             n.width - 1
         );
     }
@@ -51,11 +52,7 @@ fn testbench(
         if text.len() > 16 * 1024 * 1024 {
             return Err("RTL testbench exceeds 16 MiB".into());
         }
-        let inputs = vector
-            .inputs
-            .iter()
-            .map(|(k, v)| Ok((k.clone(), design_core::number(v)?)))
-            .collect::<Result<BTreeMap<_, _>, String>>()?;
+        let inputs = doc.parse_signals(&vector.inputs, Kind::Input)?;
         if inputs.len() != ports.iter().filter(|n| n.kind == Kind::Input).count() {
             return Err("Supply exactly the design inputs".into());
         }
@@ -89,7 +86,7 @@ fn testbench(
     }
     Ok((text, reference))
 }
-fn execute(
+pub(crate) fn execute(
     binary: &Path,
     args: &[&str],
     dir: &Path,
@@ -115,14 +112,18 @@ fn execute(
         let excessive = fs::metadata(dir.join(log_name))
             .map(|m| m.len() > LOG_LIMIT)
             .unwrap_or(false);
-        if Instant::now() >= deadline || excessive || status.is_err() {
+        let vcd_excessive = fs::metadata(dir.join("simulation.vcd"))
+            .is_ok_and(|m| m.len() > crate::rtl_stimuli::VCD_LIMIT);
+        if Instant::now() >= deadline || excessive || vcd_excessive || status.is_err() {
             #[cfg(unix)]
             unsafe {
                 libc::kill(-(child.id() as i32), libc::SIGKILL);
             }
             let _ = child.kill();
             let _ = child.wait();
-            return Err(if excessive {
+            return Err(if vcd_excessive {
+                "VCD exceeds 12 MiB"
+            } else if excessive {
                 "Tool output exceeded 4 MiB"
             } else {
                 "Tool timed out or could not be monitored"
@@ -135,7 +136,7 @@ fn execute(
         std::thread::sleep(Duration::from_millis(20));
     }
 }
-fn log(dir: &Path, name: &str) -> String {
+pub(crate) fn log(dir: &Path, name: &str) -> String {
     let mut bytes = vec![];
     if let Ok(file) = File::open(dir.join(name)) {
         let _ = file.take(LOG_LIMIT).read_to_end(&mut bytes);
@@ -674,6 +675,196 @@ mod tests {
         assert_eq!(value("expected"), value("a").wrapping_add(value("b")));
     }
 
+    #[test]
+    #[ignore = "Requires installed Icarus, Verilator and C++ compiler"]
+    fn bit_nodes_match_independent_expectations_in_both_simulators() {
+        let root = Root::new("bit-nodes");
+        for width in [2u8, 8, 32, 64] {
+            let doc: Document = serde_json::from_value(json!({"name":"BitOps","nodes":[
+                {"id":"data","name":"data","kind":"input","width":width,"x":0,"y":0},
+                {"id":"one","name":"one","kind":"constant","width":1,"x":0,"y":0,"config":{"type":"constant","value":"1"}},
+                {"id":"maxval","name":"maxval","kind":"constant","width":width,"x":0,"y":0,"config":{"type":"constant","value":design_core::mask(width).to_string()}},
+                {"id":"cut","name":"cut","kind":"slice","width":width-1,"x":0,"y":0,"config":{"type":"slice","input_width":width,"lsb":1}},
+                {"id":"cat","name":"cat","kind":"concat","width":width,"x":0,"y":0,"config":{"type":"concat","high_width":width-1,"low_width":1}},
+                {"id":"full","name":"full","kind":"slice","width":width,"x":0,"y":0,"config":{"type":"slice","input_width":width,"lsb":0}},
+                {"id":"result","name":"result","kind":"output","width":width,"x":0,"y":0},
+                {"id":"maxout","name":"maxout","kind":"output","width":width,"x":0,"y":0},
+                {"id":"copyout","name":"copyout","kind":"output","width":width,"x":0,"y":0}
+            ],"edges":[
+                {"id":"e0","from":"data","to":"cut","port":"a"},
+                {"id":"e1","from":"cut","to":"cat","port":"hi"},
+                {"id":"e2","from":"one","to":"cat","port":"lo"},
+                {"id":"e3","from":"cat","to":"result","port":"a"},
+                {"id":"e4","from":"maxval","to":"maxout","port":"a"},
+                {"id":"e5","from":"data","to":"full","port":"a"},
+                {"id":"e6","from":"full","to":"copyout","port":"a"}
+            ]})).unwrap();
+            let vectors: Vec<TestVector> = [
+                0,
+                1,
+                design_core::mask(width),
+                1u64 << (width - 1),
+                0x123456789ABCDEF0 & design_core::mask(width),
+            ]
+            .into_iter()
+            .map(|value| TestVector {
+                inputs: BTreeMap::from([("data".into(), value.to_string())]),
+                expected: BTreeMap::from([
+                    ("result".into(), (value | 1).to_string()),
+                    ("maxout".into(), design_core::mask(width).to_string()),
+                    ("copyout".into(), value.to_string()),
+                ]),
+            })
+            .collect();
+            for engine in [Engine::Icarus, Engine::Verilator] {
+                let result =
+                    run_engine_source(&root.0, 0, &doc, &vectors, &doc.rtl().unwrap(), engine)
+                        .unwrap();
+                assert_eq!(result["success"], true, "width {width}: {result}");
+                assert_eq!(result["rtl_passed"], 5);
+                assert_eq!(result["contract_passed"], 5);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "Requires installed Icarus, Verilator and C++ compiler"]
+    fn extensions_match_signed_math_in_both_simulators() {
+        let root = Root::new("extensions");
+        let project: Value =
+            serde_json::from_str(include_str!("../../../examples/extension-nodes.json")).unwrap();
+        for (input, output) in [
+            (1u8, 1u8),
+            (1, 64),
+            (4, 8),
+            (8, 16),
+            (31, 32),
+            (32, 64),
+            (63, 64),
+            (64, 64),
+        ] {
+            let mut doc: Document = serde_json::from_value(project["document"].clone()).unwrap();
+            for n in doc.nodes.iter_mut() {
+                n.width = if n.kind == Kind::Input { input } else { output };
+                match &mut n.config {
+                    design_core::NodeConfig::ZeroExtend { input_width }
+                    | design_core::NodeConfig::SignExtend { input_width } => *input_width = input,
+                    _ => {}
+                }
+            }
+            let sign = 1u64 << (input - 1);
+            let vectors: Vec<TestVector> = [
+                0,
+                sign - 1,
+                sign,
+                design_core::mask(input),
+                0xA55A123456789ABC & design_core::mask(input),
+            ]
+            .into_iter()
+            .map(|bits| {
+                let signed = i128::from(bits) - if bits >= sign { 1i128 << input } else { 0 };
+                let extended = (signed & i128::from(design_core::mask(output))) as u64;
+                TestVector {
+                    inputs: BTreeMap::from([("data".into(), bits.to_string())]),
+                    expected: BTreeMap::from([
+                        ("zero_out".into(), bits.to_string()),
+                        ("sign_out".into(), extended.to_string()),
+                    ]),
+                }
+            })
+            .collect();
+            for engine in [Engine::Icarus, Engine::Verilator] {
+                let result =
+                    run_engine_source(&root.0, 0, &doc, &vectors, &doc.rtl().unwrap(), engine)
+                        .unwrap();
+                assert_eq!(result["success"], true, "{input} → {output}: {result}");
+                assert_eq!(result["rtl_passed"], 5);
+                assert_eq!(result["contract_passed"], 5);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "Requires installed Icarus, Verilator and C++ compiler"]
+    fn signed_operators_match_independent_math_in_both_simulators() {
+        let root = Root::new("signed");
+        for width in [1u8, 4, 8, 32, 64] {
+            for kind in [
+                Kind::Add,
+                Kind::Sub,
+                Kind::And,
+                Kind::Or,
+                Kind::Xor,
+                Kind::Not,
+                Kind::Mux,
+            ] {
+                let mut doc = Document::demo().set_signed("a", true).unwrap();
+                for n in doc.nodes.iter_mut() {
+                    if n.id != "op" {
+                        n.width = width;
+                    }
+                }
+                if kind != Kind::Mux {
+                    doc.nodes.update("add", |n| n.kind = kind.clone()).unwrap();
+                    if kind == Kind::Not {
+                        doc.edges.retain(|e| e.id != "b_add");
+                    }
+                }
+                let min = -(1i128 << (width - 1));
+                let max = -min - 1;
+                let mut vectors = vec![];
+                for (a, b) in [(min, -1), (max, 1.min(max)), (-1, 0), (min, max), (0, -1)] {
+                    for sel in 0..3 {
+                        let op = if kind == Kind::Mux {
+                            match sel {
+                                0 => Kind::Add,
+                                1 => Kind::And,
+                                _ => Kind::Xor,
+                            }
+                        } else {
+                            kind.clone()
+                        };
+                        let math = match op {
+                            Kind::Add => a + b,
+                            Kind::Sub => a - b,
+                            Kind::And => a & b,
+                            Kind::Or => a | b,
+                            Kind::Xor => a ^ b,
+                            Kind::Not => !a,
+                            _ => unreachable!(),
+                        };
+                        let modulus = 1i128 << width;
+                        let bits = math.rem_euclid(modulus);
+                        let expected = if bits > max { bits - modulus } else { bits };
+                        vectors.push(TestVector {
+                            inputs: BTreeMap::from([
+                                ("a".into(), a.to_string()),
+                                ("b".into(), b.to_string()),
+                                (
+                                    "op".into(),
+                                    if kind == Kind::Mux {
+                                        sel.to_string()
+                                    } else {
+                                        "0".into()
+                                    },
+                                ),
+                            ]),
+                            expected: BTreeMap::from([("result".into(), expected.to_string())]),
+                        });
+                    }
+                }
+                for engine in [Engine::Icarus, Engine::Verilator] {
+                    let result =
+                        run_engine_source(&root.0, 0, &doc, &vectors, &doc.rtl().unwrap(), engine)
+                            .unwrap();
+                    assert_eq!(result["success"], true, "{kind:?}/{width}: {result}");
+                    assert_eq!(result["rtl_passed"], vectors.len());
+                    assert_eq!(result["contract_passed"], vectors.len());
+                }
+            }
+        }
+    }
+
     fn next_sample(state: &mut u64) -> u64 {
         *state ^= *state << 13;
         *state ^= *state >> 7;
@@ -692,6 +883,8 @@ mod tests {
                 let name = format!("input_{lane}_{index}");
                 available.push(name.clone());
                 nodes.push(design_core::Node {
+                    signed: false,
+                    config: Default::default(),
                     id: name.clone(),
                     name,
                     kind: Kind::Input,
@@ -701,6 +894,8 @@ mod tests {
                 });
             }
             nodes.push(design_core::Node {
+                signed: false,
+                config: Default::default(),
                 id: selector.clone(),
                 name: selector.clone(),
                 kind: Kind::Input,
@@ -724,6 +919,8 @@ mod tests {
             {
                 let name = format!("gate_{lane}_{index}");
                 let node = design_core::Node {
+                    signed: false,
+                    config: Default::default(),
                     id: name.clone(),
                     name,
                     kind,
@@ -826,6 +1023,8 @@ mod tests {
         ]
         .into_iter()
         .map(|(name, kind)| design_core::Node {
+            signed: false,
+            config: Default::default(),
             id: name.into(),
             name: name.into(),
             kind,
@@ -926,6 +1125,47 @@ mod tests {
         assert_eq!(
             log(&root.0, "sim.log").lines().collect::<Vec<_>>(),
             expected
+        );
+        // The same feedback/pipeline, now using signed decimal stimulus and results.
+        let signed = doc.set_signed("inc", true).unwrap();
+        let payload = cycles.map(|(reset, inc)| design_core::CycleInput {
+            reset,
+            inputs: BTreeMap::from([("inc".into(), design_core::signed_value(inc, 3).to_string())]),
+        });
+        let samples = signed.simulate_cycles(&payload).unwrap();
+        let expected_signed = ["0 0", "3 0", "-2 3", "1 -2", "0 0", "-1 0"];
+        for (sample, expected) in samples.iter().zip(expected_signed) {
+            assert_eq!(
+                format!("{} {}", sample.registers["acc"], sample.outputs["result"]),
+                expected
+            );
+        }
+        fs::write(root.0.join("design.v"), signed.rtl().unwrap()).unwrap();
+        let mut bench=String::from("module tb; reg clk=0,rst; reg signed [2:0] inc; wire signed [2:0] result; las_accumulator dut(.las_clk(clk),.las_reset(rst),.n_inc(inc),.n_result(result)); initial begin\n");
+        for cycle in payload {
+            bench+=&format!("rst={}; inc={}; #1; clk=1; #1; $display(\"%0d %0d\",dut.n_acc,result); clk=0; #1;\n",u8::from(cycle.reset),cycle.inputs["inc"]);
+        }
+        bench += "end endmodule";
+        fs::write(root.0.join("tb.v"), bench).unwrap();
+        assert!(execute(
+            &super::super::executable("iverilog").unwrap(),
+            &["-s", "tb", "-o", "sim.vvp", "design.v", "tb.v"],
+            &root.0,
+            "compile.log",
+            deadline
+        )
+        .unwrap());
+        assert!(execute(
+            &super::super::executable("vvp").unwrap(),
+            &["sim.vvp"],
+            &root.0,
+            "sim.log",
+            deadline
+        )
+        .unwrap());
+        assert_eq!(
+            log(&root.0, "sim.log").lines().collect::<Vec<_>>(),
+            expected_signed
         );
     }
 

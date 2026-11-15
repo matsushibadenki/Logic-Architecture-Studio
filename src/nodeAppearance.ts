@@ -22,11 +22,11 @@ export function portY(node: Node, index: number, output = false) {
   );
 }
 export function tone(kind: Kind) {
-  return kind === "input"
+  return kind === "input" || kind === "constant"
     ? "mint"
     : kind === "output"
       ? "rose"
-      : kind === "mux" || kind === "register"
+      : kind === "mux" || kind === "register" || kind === "sign_extend"
         ? "amber"
         : ["add", "sub"].includes(kind)
           ? "blue"
@@ -36,6 +36,20 @@ export function caption(node: Node, locale: Locale) {
   const expressions: Record<Kind, string> = {
     input: locale === "ja" ? "入力" : locale === "zh" ? "输入" : "Input",
     output: locale === "ja" ? "出力" : locale === "zh" ? "输出" : "Output",
+    constant: `y = ${node.config?.type === "constant" ? node.config.value : "0"}`,
+    slice:
+      node.config?.type === "slice"
+        ? `y = a[${node.config.lsb + node.width - 1}:${node.config.lsb}]`
+        : "[:]",
+    concat: "y = {hi, lo}",
+    zero_extend:
+      node.config?.type === "zero_extend"
+        ? `u${node.config.input_width} → ${node.signed ? "s" : "u"}${node.width} · 0`
+        : "ZX",
+    sign_extend:
+      node.config?.type === "sign_extend"
+        ? `s${node.config.input_width} → ${node.signed ? "s" : "u"}${node.width} · MSB`
+        : "SX",
     add: "y = a + b",
     sub: "y = a − b",
     and: "y = a & b",

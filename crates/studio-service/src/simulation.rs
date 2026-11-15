@@ -17,8 +17,43 @@ struct Trace {
     samples: Vec<CycleSample>,
     selected: usize,
     radix: u32,
+    testbench_version: Option<u64>,
+    checks: Option<design_core::testbench::CheckReport>,
+    external: Option<Value>,
+    external_vcd: Option<String>,
 }
 impl Session {
+    pub(crate) fn version(&self) -> u64 {
+        self.version
+    }
+    pub(crate) fn install_external(&mut self, workspace: &Workspace, run: crate::rtl_stimuli::Run) {
+        self.generation += 1;
+        self.version += 1;
+        let id = format!(
+            "{}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos(),
+            self.generation
+        );
+        let radix = self.trace.as_ref().map_or(10, |t| t.radix);
+        self.trace = Some(Trace {
+            id,
+            revision: workspace.revision,
+            document: workspace.document.clone(),
+            selected: run.samples.len() - 1,
+            samples: run.samples,
+            cycles: run.cycles,
+            radix,
+            testbench_version: Some(workspace.testbench.version),
+            checks: Some(run.checks),
+            external: Some(run.comparison),
+            external_vcd: Some(run.vcd),
+        });
+    }
+
     pub fn execute(
         &mut self,
         workspace: &Workspace,
@@ -26,13 +61,23 @@ impl Session {
         args: &Value,
     ) -> Result<Value, String> {
         match method {
-            "simulation.cycles" | "simulation.evaluate" => {
-                if method == "simulation.cycles"
+            "simulation.cycles" | "simulation.evaluate" | "simulation.testbench" => {
+                if method != "simulation.evaluate"
                     && args["expected_revision"].as_u64() != Some(workspace.revision)
                 {
                     return Err("Revision conflict".into());
                 }
-                let (cycles, samples) = if method == "simulation.cycles" {
+                let mut checks = None;
+                let mut testbench_version = None;
+                let (cycles, samples) = if method == "simulation.testbench" {
+                    if args["expected_version"].as_u64() != Some(workspace.testbench.version) {
+                        return Err("Stimulus table changed; reload before running".into());
+                    }
+                    let (cycles, samples, report) = workspace.testbench.run(&workspace.document)?;
+                    checks = Some(report);
+                    testbench_version = Some(workspace.testbench.version);
+                    (cycles, samples)
+                } else if method == "simulation.cycles" {
                     let cycles: Vec<CycleInput> = serde_json::from_value(args["cycles"].clone())
                         .map_err(|e| e.to_string())?;
                     let samples = workspace.document.simulate_cycles(&cycles)?;
@@ -41,17 +86,14 @@ impl Session {
                     let strings: BTreeMap<String, String> =
                         serde_json::from_value(args["inputs"].clone())
                             .map_err(|e| e.to_string())?;
-                    let inputs = strings
-                        .iter()
-                        .map(|(k, v)| Ok((k.clone(), design_core::number(v)?)))
-                        .collect::<Result<_, String>>()?;
+                    let inputs = workspace.document.parse_signals(&strings, Kind::Input)?;
                     let values = workspace.document.evaluate_signals(&inputs)?;
                     let outputs = workspace
                         .document
                         .nodes
                         .iter()
                         .filter(|n| n.kind == Kind::Output)
-                        .map(|n| (n.name.clone(), values[&n.id].to_string()))
+                        .map(|n| (n.name.clone(), n.decimal(values[&n.id])))
                         .collect();
                     (
                         vec![CycleInput {
@@ -92,6 +134,10 @@ impl Session {
                     samples,
                     cycles,
                     radix,
+                    checks,
+                    testbench_version,
+                    external: None,
+                    external_vcd: None,
                 });
                 self.version += 1;
             }
@@ -124,7 +170,7 @@ impl Session {
                 if args["trace_id"].as_str() != Some(&trace.id) {
                     return Err("Simulation trace replaced".into());
                 }
-                let source = trace.vcd();
+                let source = trace.external_vcd.clone().unwrap_or_else(|| trace.vcd());
                 if source.len() > 12 * 1024 * 1024 {
                     return Err("VCD exceeds 12 MiB; use fewer cycles".into());
                 }
@@ -147,10 +193,10 @@ impl Session {
         let session = self.trace.as_ref().map(|trace| {
             let sample = &trace.samples[trace.selected];
             let format = |v: u64, width: u8| if trace.radix == 16 { format!("0x{:0width$X}", v, width = usize::from(width).div_ceil(4)) } else { v.to_string() };
-            let values = trace.document.nodes.iter().map(|n| (n.id.clone(), format(sample.values[&n.id], n.width))).collect::<BTreeMap<_, _>>();
-            let register_d = trace.document.edges.iter().filter(|e| trace.document.node(&e.to).is_ok_and(|n| n.kind == Kind::Register)).map(|e| (e.to.clone(), format(sample.values[&e.from], trace.document.node(&e.to).unwrap().width))).collect::<BTreeMap<_, _>>();
-            json!({"id":trace.id,"revision":trace.revision,"cycles":trace.cycles,"samples":trace.samples,"selected":trace.selected,"radix":trace.radix,
-                "signals": trace.document.nodes.iter().filter(|n| matches!(n.kind, Kind::Input | Kind::Output | Kind::Register)).map(|n| json!({"id":n.id,"name":n.name,"kind":n.kind,"width":n.width})).collect::<Vec<_>>(),
+            let values = trace.document.nodes.iter().map(|n| (n.id.clone(), if n.signed && trace.radix == 10 { design_core::signed_value(sample.values[&n.id], n.width).to_string() } else { format(sample.values[&n.id], n.width) })).collect::<BTreeMap<_, _>>();
+            let register_d = trace.document.edges.iter().filter(|e| trace.document.node(&e.to).is_ok_and(|n| n.kind == Kind::Register)).map(|e| (e.to.clone(), { let n=trace.document.node(&e.to).unwrap(); if trace.radix == 10 { n.decimal(sample.values[&e.from]) } else { format(sample.values[&e.from], n.width) } })).collect::<BTreeMap<_, _>>();
+            json!({"id":trace.id,"revision":trace.revision,"cycles":trace.cycles,"samples":trace.samples,"selected":trace.selected,"radix":trace.radix,"checks":trace.checks,"external":trace.external,"testbench_version":trace.testbench_version,
+                "signals": trace.document.nodes.iter().filter(|n| matches!(n.kind, Kind::Input | Kind::Output | Kind::Register)).map(|n| json!({"id":n.id,"name":n.name,"kind":n.kind,"width":n.width,"signed":n.signed})).collect::<Vec<_>>(),
                 "annotation": if trace.revision == workspace.revision { json!({"version":self.version,"revision":trace.revision,"values":values,"register_d":register_d}) } else { Value::Null }})
         });
         // Keep the existing GUI/MCP evaluation response fields compatible.
@@ -166,7 +212,7 @@ impl Session {
 impl Trace {
     fn vcd(&self) -> String {
         use std::fmt::Write;
-        let mut out = String::from("$version Logic Architecture Studio $end\n$comment Rust unsigned two-state samples after each rising edge. 1 ns per sample is synthetic; no propagation or pre-reset state is modeled. $end\n$timescale 1 ns $end\n$scope module logic $end\n$var wire 1 rst reset $end\n");
+        let mut out = String::from("$version Logic Architecture Studio $end\n$comment Rust two-state bit-vector samples after each rising edge. 1 ns per sample is synthetic; no propagation or pre-reset state is modeled. $end\n$timescale 1 ns $end\n$scope module logic $end\n$var wire 1 rst reset $end\n");
         for (index, node) in self.document.nodes.iter().enumerate() {
             writeln!(
                 out,
@@ -219,6 +265,8 @@ mod tests {
         ]
         .into_iter()
         .map(|(id, kind)| design_core::Node {
+            signed: false,
+            config: Default::default(),
             id: id.into(),
             name: id.into(),
             kind,
@@ -253,6 +301,97 @@ mod tests {
     fn run(session: &mut Session, workspace: &Workspace) -> Value {
         session.execute(workspace, "simulation.cycles", &json!({"expected_revision":0,"cycles":[{"reset":true,"inputs":{"inc":"3"}},{"reset":false,"inputs":{"inc":"3"}},{"reset":false,"inputs":{"inc":"3"}},{"reset":false,"inputs":{"inc":"3"}},{"reset":true,"inputs":{"inc":"7"}}]})).unwrap()
     }
+    #[test]
+    fn signed_feedback_trace_formats_d_q_results_and_negative_expectations() {
+        let mut w = accumulator();
+        w.document = Arc::new(w.document.set_signed("acc", true).unwrap());
+        assert!(w.document.nodes.iter().all(|n| n.signed));
+        assert!(w.document.rtl().unwrap().contains("reg signed [2:0] n_acc"));
+        Arc::make_mut(&mut w.testbench).rows = design_core::testbench::Testbench::import_csv(
+            &w.document,
+            "cycle,reset,in.inc,expect.result\n1,1,-3,0\n2,0,-3,-3\n3,0,-3,2\n4,1,-3,0\n",
+        )
+        .unwrap();
+        let mut session = Session::default();
+        let result = session
+            .execute(
+                &w,
+                "simulation.testbench",
+                &json!({"expected_revision":0,"expected_version":0}),
+            )
+            .unwrap();
+        assert_eq!(result["session"]["checks"]["passed"], 4);
+        let selected=session.execute(&w,"simulation.select",&json!({"expected_revision":0,"trace_id":result["session"]["id"],"index":1,"radix":10})).unwrap();
+        assert_eq!(selected["session"]["annotation"]["values"]["acc"], "-3");
+        assert_eq!(selected["session"]["annotation"]["register_d"]["acc"], "2");
+        assert_eq!(selected["session"]["samples"][1]["registers"]["acc"], "-3");
+    }
+
+    #[test]
+    fn typed_annotations_and_results_are_signed_while_vcd_retains_bits() {
+        let project: Value =
+            serde_json::from_str(include_str!("../../../examples/extension-nodes.json")).unwrap();
+        let mut workspace = Workspace::default();
+        workspace.document = Arc::new(serde_json::from_value(project["document"].clone()).unwrap());
+        workspace.document = Arc::new(workspace.document.set_signed("signed_bits", true).unwrap());
+        let mut session = Session::default();
+        let result = session
+            .execute(
+                &workspace,
+                "simulation.evaluate",
+                &json!({"inputs":{"data":"8"}}),
+            )
+            .unwrap();
+        assert_eq!(result["outputs"]["sign_out"], "-8");
+        assert_eq!(
+            result["session"]["annotation"]["values"]["signed_bits"],
+            "-8"
+        );
+        assert_eq!(result["session"]["annotation"]["values"]["zero"], "8");
+        assert_eq!(result["session"]["annotation"]["values"]["sign_out"], "-8");
+        let id = result["session"]["id"].clone();
+        let hex = session
+            .execute(
+                &workspace,
+                "simulation.select",
+                &json!({"expected_revision":0,"trace_id":id,"index":0,"radix":16}),
+            )
+            .unwrap();
+        assert_eq!(
+            hex["session"]["annotation"]["values"]["signed_bits"],
+            "0xF8"
+        );
+        let vcd = session
+            .execute(
+                &workspace,
+                "simulation.vcd",
+                &json!({"expected_revision":0,"trace_id":id}),
+            )
+            .unwrap();
+        assert!(vcd["source"].as_str().unwrap().contains("b11111000"));
+        assert!(!vcd["source"].as_str().unwrap().contains("b-"));
+        for n in Arc::make_mut(&mut workspace.document).nodes.iter_mut() {
+            n.width = 64;
+            match &mut n.config {
+                design_core::NodeConfig::ZeroExtend { input_width }
+                | design_core::NodeConfig::SignExtend { input_width } => *input_width = 64,
+                _ => {}
+            }
+        }
+        let mut session = Session::default();
+        let result = session
+            .execute(
+                &workspace,
+                "simulation.evaluate",
+                &json!({"inputs":{"data":"0x8000000000000000"}}),
+            )
+            .unwrap();
+        assert_eq!(
+            result["session"]["annotation"]["values"]["signed_bits"],
+            "-9223372036854775808"
+        );
+    }
+
     #[test]
     fn shared_selection_uses_post_edge_values_and_rejects_stale_results() {
         let mut workspace = accumulator();

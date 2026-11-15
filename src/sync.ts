@@ -60,6 +60,7 @@ const setKeys = new Set([
   "selection",
   "locale",
   "node_colors",
+  "testbench",
   "panels",
   "diagnostics",
 ]);

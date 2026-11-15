@@ -12,7 +12,13 @@ import {
 } from "lucide-react";
 import { patch, action, selectNodes } from "../store";
 import { translation } from "../i18n";
-import { ports, symbols, type Snapshot, type Node } from "../types";
+import {
+  inputSigned,
+  ports,
+  symbols,
+  type Snapshot,
+  type Node,
+} from "../types";
 import {
   NODE_WIDTH as W,
   nodeHeight,
@@ -467,7 +473,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
               tabIndex={0}
               role="button"
               aria-pressed={selected}
-              aria-label={`${n.name}, ${n.kind}, ${n.width} bit`}
+              aria-label={`${n.name}, ${n.kind}, ${n.width}{n.signed ? "s" : "u"}`}
               onKeyDown={(e) => {
                 if (e.key === "Enter")
                   void selectNodes(
@@ -550,7 +556,8 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                 y={h - 14}
                 textAnchor="end"
               >
-                {n.width} bit
+                {n.width}
+                {n.signed ? "s" : "u"}
               </text>
               {annotation?.values[n.id] != null && (
                 <>
@@ -577,6 +584,8 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                 const compatible =
                   sourceNode &&
                   sourceNode.width === width &&
+                  (inputSigned(n, p) === undefined ||
+                    inputSigned(n, p) === !!sourceNode.signed) &&
                   (sourceNode.id !== n.id || n.kind === "register") &&
                   !connected;
                 return (
@@ -622,6 +631,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                       {p}
                       <tspan className="port-width">
                         {width > 1 ? `[${width - 1}:0]` : ""}
+                        {inputSigned(n, p) ? " s" : ""}
                       </tspan>
                     </text>
                     <title>
@@ -635,7 +645,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                   className="port output-port is-connected"
                   role="button"
                   tabIndex={0}
-                  aria-label={`${n.name}.y ${n.width} bit`}
+                  aria-label={`${n.name}.y ${n.width}{n.signed ? "s" : "u"}`}
                   onPointerDown={(e) => e.stopPropagation()}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -669,6 +679,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                   <text x={W - 12} y={labelY(n, 0, true)} textAnchor="end">
                     {n.kind === "register" ? "q" : "y"}
                     {n.width > 1 ? `[${n.width - 1}:0]` : ""}
+                    {n.signed ? " s" : ""}
                   </text>
                 </g>
               ) : null}
@@ -680,7 +691,14 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                   textAnchor="middle"
                   dominantBaseline="central"
                   fontSize={
-                    n.kind === "mux" || n.kind === "register"
+                    [
+                      "mux",
+                      "register",
+                      "slice",
+                      "concat",
+                      "zero_extend",
+                      "sign_extend",
+                    ].includes(n.kind)
                       ? 100
                       : n.kind === "or"
                         ? 140
@@ -697,7 +715,8 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                 </text>
               )}
               <title>
-                {n.name} · {n.kind.toUpperCase()} · {n.width} bit
+                {n.name} · {n.kind.toUpperCase()} · {n.width}
+                {n.signed ? "s" : "u"}
               </title>
             </g>
           );

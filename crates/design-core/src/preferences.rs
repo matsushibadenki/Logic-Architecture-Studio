@@ -1,6 +1,11 @@
 use std::collections::BTreeMap;
 pub fn default_node_colors() -> BTreeMap<String, String> {
     [
+        ("zero_extend", "#b69df9"),
+        ("sign_extend", "#f1bd68"),
+        ("constant", "#5fd5b8"),
+        ("slice", "#b69df9"),
+        ("concat", "#b69df9"),
         ("input", "#5fd5b8"),
         ("output", "#ee8ba0"),
         ("add", "#78a2ff"),

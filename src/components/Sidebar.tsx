@@ -3,7 +3,7 @@ import { memo, useState } from "react";
 import { Search, ChevronDown, Cpu, Plus } from "lucide-react";
 import { patch, select } from "../store";
 import { translation } from "../i18n";
-import { kinds, symbols, type Snapshot } from "../types";
+import { defaultConfig, kinds, symbols, type Snapshot } from "../types";
 const HierarchyRow = memo(function HierarchyRow({
   id,
   name,
@@ -86,7 +86,7 @@ export function Library({ snapshot }: { snapshot: Snapshot }) {
       {kinds.map((kind) => (
         <button
           key={kind}
-          title={`${t("newNode")}: ${kind === "register" ? t("registerKind") : kind}`}
+          title={`${t("newNode")}: ${["constant", "slice", "concat", "zero_extend", "sign_extend", "register"].includes(kind) ? t(`${kind}Kind` as "constantKind") : kind}`}
           onClick={() => {
             const id = `n_${crypto.randomUUID().replaceAll("-", "")}`;
             const prefix =
@@ -112,6 +112,8 @@ export function Library({ snapshot }: { snapshot: Snapshot }) {
                     name,
                     kind,
                     width: 32,
+                    signed: kind === "sign_extend",
+                    config: defaultConfig(kind, 32),
                     x: 200 + (snapshot.document.nodes.length % 4) * 60,
                     y: 100 + (snapshot.document.nodes.length % 5) * 80,
                   },
@@ -134,7 +136,15 @@ export function Library({ snapshot }: { snapshot: Snapshot }) {
                 ? t("outputs")
                 : kind === "register"
                   ? t("registerKind")
-                  : kind.toUpperCase()}
+                  : [
+                        "constant",
+                        "slice",
+                        "concat",
+                        "zero_extend",
+                        "sign_extend",
+                      ].includes(kind)
+                    ? t(`${kind}Kind` as "constantKind")
+                    : kind.toUpperCase()}
           </span>
           <Plus size={13} />
         </button>

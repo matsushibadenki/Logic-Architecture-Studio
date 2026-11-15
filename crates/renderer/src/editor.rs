@@ -94,6 +94,8 @@ impl EditorView {
                 name: None,
                 kind: None,
                 width: None,
+                signed: None,
+                config: None,
                 x: Some(rect.x),
                 y: Some(rect.y),
             }),
@@ -452,6 +454,8 @@ mod tests {
             name: "feedback".into(),
             nodes: vec![
                 design_core::Node {
+                    signed: false,
+                    config: Default::default(),
                     id: "sum".into(),
                     name: "sum".into(),
                     kind: Kind::Add,
@@ -460,6 +464,8 @@ mod tests {
                     y: 100.,
                 },
                 design_core::Node {
+                    signed: false,
+                    config: Default::default(),
                     id: "acc".into(),
                     name: "acc".into(),
                     kind: Kind::Register,
@@ -541,5 +547,47 @@ mod tests {
                 design_core::apply(&d, &ops).unwrap();
             }
         }
+    }
+    #[test]
+    fn native_preview_rejects_signed_mismatch_with_matching_width() {
+        let mut doc = Document::demo();
+        doc.edges.retain(|e| e.from != "a");
+        doc = doc.set_signed("a", true).unwrap();
+        let mut view = EditorView::default();
+        view.viewport.zoom = 1.;
+        view.viewport.origin = [0., 0.];
+        let from = unge_core::port_anchor(node_rect(doc.node("a").unwrap()), 0, 1, true);
+        let to = unge_core::port_anchor(node_rect(doc.node("add").unwrap()), 0, 2, false);
+        view.pointer(
+            &doc,
+            0,
+            PointerEvent::Down {
+                pointer: 0,
+                position: from,
+                button: unge_interaction::PointerButton::Primary,
+                additive: false,
+            },
+        )
+        .unwrap();
+        view.pointer(
+            &doc,
+            0,
+            PointerEvent::Move {
+                pointer: 0,
+                position: to,
+            },
+        )
+        .unwrap();
+        assert!(!view.interaction.preview().cable.as_ref().unwrap().valid);
+        assert!(view
+            .pointer(
+                &doc,
+                0,
+                PointerEvent::Up {
+                    pointer: 0,
+                    position: to
+                }
+            )
+            .is_err());
     }
 }

@@ -46,7 +46,15 @@ export default function Preferences() {
         ? t("outputs")
         : kind === "register"
           ? t("registerKind")
-          : kind.toUpperCase();
+          : [
+                "constant",
+                "slice",
+                "concat",
+                "zero_extend",
+                "sign_extend",
+              ].includes(kind)
+            ? t(`${kind}Kind` as "constantKind")
+            : kind.toUpperCase();
   const valid = (value: string) => /^#[\da-f]{6}$/i.test(value);
   const changed = Object.fromEntries(
     Object.entries(colorEdits).filter(

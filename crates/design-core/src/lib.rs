@@ -1,4 +1,5 @@
 mod preferences;
+pub mod testbench;
 pub use preferences::{default_node_colors, parse_node_color};
 pub mod entities;
 pub mod model;
@@ -22,6 +23,8 @@ pub enum Operation {
         name: Option<String>,
         kind: Option<Kind>,
         width: Option<u8>,
+        signed: Option<bool>,
+        config: Option<NodeConfig>,
         x: Option<f32>,
         y: Option<f32>,
     },
@@ -115,6 +118,8 @@ pub struct Workspace {
     #[serde(default = "default_node_colors")]
     pub node_colors: BTreeMap<String, String>,
     pub panels: BTreeMap<String, String>,
+    #[serde(default)]
+    pub testbench: Arc<testbench::Testbench>,
     #[serde(skip)]
     history_cache: HistoryCache,
 }
@@ -134,6 +139,7 @@ impl Default for Workspace {
             locale: "ja".into(),
             node_colors: default_node_colors(),
             history_cache: HistoryCache::default(),
+            testbench: Arc::default(),
             panels: BTreeMap::new(),
         }
     }
@@ -167,6 +173,8 @@ pub fn apply(document: &Document, operations: &[Operation]) -> Result<Document, 
                 name,
                 kind,
                 width,
+                signed,
+                config,
                 x,
                 y,
             } => {
@@ -180,6 +188,12 @@ pub fn apply(document: &Document, operations: &[Operation]) -> Result<Document, 
                 }
                 if let Some(v) = kind {
                     n.kind = v.clone();
+                }
+                if let Some(v) = signed {
+                    n.signed = *v;
+                }
+                if let Some(v) = config {
+                    n.config = v.clone();
                 }
                 if let Some(v) = width {
                     n.width = *v;
@@ -204,7 +218,7 @@ pub fn apply(document: &Document, operations: &[Operation]) -> Result<Document, 
     Ok(next)
 }
 pub fn is_position_patch(args: &Value) -> bool {
-    serde_json::from_value::<Patch>(args.clone()).is_ok_and(|p| !p.operations.is_empty() && p.operations.iter().all(|op|matches!(op,Operation::UpdateNode {name:None,kind:None,width:None,x,y,..} if x.is_some() || y.is_some())))
+    serde_json::from_value::<Patch>(args.clone()).is_ok_and(|p| !p.operations.is_empty() && p.operations.iter().all(|op|matches!(op,Operation::UpdateNode {name:None,kind:None,width:None,signed:None,config:None,x,y,..} if x.is_some() || y.is_some())))
 }
 fn apply_positions(document: &Document, operations: &[Operation]) -> Result<Document, String> {
     if operations.is_empty() || operations.len() > 512 {
@@ -217,6 +231,8 @@ fn apply_positions(document: &Document, operations: &[Operation]) -> Result<Docu
             name: None,
             kind: None,
             width: None,
+            signed: None,
+            config: None,
             x,
             y,
         } = op
@@ -249,7 +265,7 @@ impl Workspace {
         }
     }
     pub fn snapshot(&self) -> Value {
-        json!({"document":self.document,"revision":self.revision,"history":self.history,"can_undo":!self.undo.is_empty(),"can_redo":!self.redo.is_empty(),"report":self.report,"experiments":self.experiments,"selected":self.selected,"selection":self.selected_nodes(),"locale":self.locale,"node_colors":self.node_colors,"panels":self.panels,"diagnostics":self.document.diagnostics()})
+        json!({"document":self.document,"revision":self.revision,"history":self.history,"can_undo":!self.undo.is_empty(),"can_redo":!self.redo.is_empty(),"report":self.report,"experiments":self.experiments,"selected":self.selected,"selection":self.selected_nodes(),"locale":self.locale,"node_colors":self.node_colors,"testbench":self.testbench,"panels":self.panels,"diagnostics":self.document.diagnostics()})
     }
     fn check_revision(&self, r: u64) -> Result<(), String> {
         if r != self.revision {
@@ -380,7 +396,7 @@ impl Workspace {
                 if patch.label.len() > 160 {
                     return Err("Patch label too long".into());
                 }
-                let positions = patch.operations.iter().all(|op|matches!(op,Operation::UpdateNode {name:None,kind:None,width:None,x,y,..} if x.is_some() || y.is_some()));
+                let positions = patch.operations.iter().all(|op|matches!(op,Operation::UpdateNode {name:None,kind:None,width:None,signed:None,config:None,x,y,..} if x.is_some() || y.is_some()));
                 let next = if positions {
                     apply_positions(&self.document, &patch.operations)?
                 } else {
@@ -412,6 +428,13 @@ impl Workspace {
                 }
                 self.trim_history(sizes);
                 self.record(method.into(), actor);
+                Ok(self.reply(compact))
+            }
+            "design.set_signed" => {
+                self.check_revision(revision(&args)?)?;
+                let signed = args["signed"].as_bool().ok_or("Missing signed Boolean")?;
+                let doc = self.document.set_signed(field(&args, "id")?, signed)?;
+                self.commit(doc, "Change connected signal type".into(), actor);
                 Ok(self.reply(compact))
             }
             "layout.auto_arrange" => {
@@ -523,6 +546,44 @@ impl Workspace {
                 self.node_colors = colors;
                 Ok(self.reply(compact))
             }
+            "testbench.set" | "testbench.import_csv" => {
+                self.check_revision(
+                    args["expected_revision"]
+                        .as_u64()
+                        .ok_or("Missing revision")?,
+                )?;
+                if args["expected_version"].as_u64() != Some(self.testbench.version) {
+                    return Err(
+                        "Stimulus table changed in another window; reload before saving".into(),
+                    );
+                }
+                let rows = if method == "testbench.import_csv" {
+                    testbench::Testbench::import_csv(&self.document, field(&args, "source")?)?
+                } else {
+                    parse(args["rows"].clone())?
+                };
+                testbench::Testbench::validate_rows(&self.document, &rows)?;
+                self.testbench = Arc::new(testbench::Testbench {
+                    version: self
+                        .testbench
+                        .version
+                        .checked_add(1)
+                        .ok_or("Stimulus version overflow")?,
+                    rows,
+                });
+                Ok(json!({"version":self.testbench.version,"committed":true}))
+            }
+            "testbench.export_csv" => {
+                self.check_revision(
+                    args["expected_revision"]
+                        .as_u64()
+                        .ok_or("Missing revision")?,
+                )?;
+                if args["expected_version"].as_u64() != Some(self.testbench.version) {
+                    return Err("Stimulus table changed; reload before exporting".into());
+                }
+                Ok(json!({"source":self.testbench.export_csv(&self.document)?}))
+            }
             "rtl.generate" => Ok(
                 json!({"revision":self.revision,"language":"Verilog-2005","source":self.document.rtl()?}),
             ),
@@ -537,13 +598,10 @@ impl Workspace {
             }
             "simulation.evaluate" => {
                 let strings: BTreeMap<String, String> = parse(args["inputs"].clone())?;
-                let inputs = strings
-                    .into_iter()
-                    .map(|(k, v)| Ok((k, number(&v)?)))
-                    .collect::<Result<_, String>>()?;
+                let inputs = self.document.parse_signals(&strings, Kind::Input)?;
                 let output = self.document.evaluate(&inputs)?;
                 Ok(
-                    json!({"revision":self.revision,"outputs":output.into_iter().map(|(k,v)|(k,v.to_string())).collect::<BTreeMap<_,_>>()}),
+                    json!({"revision":self.revision,"outputs":self.document.format_outputs(&output)}),
                 )
             }
             "verify.run_tests" => {
@@ -673,6 +731,9 @@ pub fn alu_width(doc: &Document) -> Result<u8, String> {
         .iter()
         .find(|n| n.name == "b" && n.kind == Kind::Input)
         .ok_or("Provide explicit test vectors for this design")?;
+    if doc.nodes.iter().any(|n| n.signed) {
+        return Err("Provide explicit vectors for signed designs".into());
+    }
     if a.width != b.width
         || !doc
             .nodes
@@ -749,16 +810,8 @@ pub fn verify(doc: &Document, rev: u64, vectors: &[TestVector]) -> Result<TestRe
         {
             return Err("Every output needs an expected value".into());
         }
-        let inputs = v
-            .inputs
-            .iter()
-            .map(|(k, v)| Ok((k.clone(), number(v)?)))
-            .collect::<Result<_, String>>()?;
-        let expected = v
-            .expected
-            .iter()
-            .map(|(k, v)| Ok((k.clone(), number(v)?)))
-            .collect::<Result<BTreeMap<_, _>, String>>()?;
+        let inputs = doc.parse_signals(&v.inputs, Kind::Input)?;
+        let expected = doc.parse_signals(&v.expected, Kind::Output)?;
         let actual = doc.evaluate(&inputs)?;
         if actual == expected {
             passed += 1;
@@ -777,3 +830,12 @@ pub fn verify(doc: &Document, rev: u64, vectors: &[TestVector]) -> Result<TestRe
 }
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod bit_nodes_tests;
+
+#[cfg(test)]
+mod extension_tests;
+
+#[cfg(test)]
+mod signed_tests;

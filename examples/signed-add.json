@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "document": {
+    "name": "SignedAdd",
+    "nodes": [
+      {
+        "id": "a",
+        "name": "a",
+        "kind": "input",
+        "width": 8,
+        "signed": true,
+        "x": 40,
+        "y": 40
+      },
+      {
+        "id": "b",
+        "name": "b",
+        "kind": "input",
+        "width": 8,
+        "signed": true,
+        "x": 40,
+        "y": 390
+      },
+      {
+        "id": "sum",
+        "name": "sum",
+        "kind": "add",
+        "width": 8,
+        "signed": true,
+        "x": 440,
+        "y": 220
+      },
+      {
+        "id": "result",
+        "name": "result",
+        "kind": "output",
+        "width": 8,
+        "signed": true,
+        "x": 840,
+        "y": 220
+      }
+    ],
+    "edges": [
+      {
+        "id": "e0",
+        "from": "a",
+        "to": "sum",
+        "port": "a"
+      },
+      {
+        "id": "e1",
+        "from": "b",
+        "to": "sum",
+        "port": "b"
+      },
+      {
+        "id": "e2",
+        "from": "sum",
+        "to": "result",
+        "port": "a"
+      }
+    ]
+  }
+}

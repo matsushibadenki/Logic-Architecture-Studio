@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "document": {
+    "name": "Extensions",
+    "nodes": [
+      {
+        "id": "data",
+        "name": "data",
+        "kind": "input",
+        "width": 4,
+        "x": 40,
+        "y": 240
+      },
+      {
+        "id": "zero",
+        "name": "zero",
+        "kind": "zero_extend",
+        "width": 8,
+        "x": 440,
+        "y": 40,
+        "config": {
+          "type": "zero_extend",
+          "input_width": 4
+        }
+      },
+      {
+        "id": "signed_bits",
+        "name": "signed_bits",
+        "kind": "sign_extend",
+        "width": 8,
+        "x": 440,
+        "y": 440,
+        "config": {
+          "type": "sign_extend",
+          "input_width": 4
+        }
+      },
+      {
+        "id": "zero_out",
+        "name": "zero_out",
+        "kind": "output",
+        "width": 8,
+        "x": 840,
+        "y": 40
+      },
+      {
+        "id": "sign_out",
+        "name": "sign_out",
+        "kind": "output",
+        "width": 8,
+        "x": 840,
+        "y": 440
+      }
+    ],
+    "edges": [
+      {
+        "id": "e0",
+        "from": "data",
+        "to": "zero",
+        "port": "a"
+      },
+      {
+        "id": "e1",
+        "from": "data",
+        "to": "signed_bits",
+        "port": "a"
+      },
+      {
+        "id": "e2",
+        "from": "zero",
+        "to": "zero_out",
+        "port": "a"
+      },
+      {
+        "id": "e3",
+        "from": "signed_bits",
+        "to": "sign_out",
+        "port": "a"
+      }
+    ]
+  }
+}

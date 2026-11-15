@@ -1,0 +1,88 @@
+{
+  "schema": 1,
+  "document": {
+    "name": "BitNodes",
+    "nodes": [
+      {
+        "id": "low",
+        "name": "low",
+        "kind": "input",
+        "width": 4,
+        "x": 40,
+        "y": 440
+      },
+      {
+        "id": "literal",
+        "name": "literal",
+        "kind": "constant",
+        "width": 8,
+        "x": 40,
+        "y": 80,
+        "config": {
+          "type": "constant",
+          "value": "0xAB"
+        }
+      },
+      {
+        "id": "upper",
+        "name": "upper",
+        "kind": "slice",
+        "width": 4,
+        "x": 400,
+        "y": 80,
+        "config": {
+          "type": "slice",
+          "input_width": 8,
+          "lsb": 4
+        }
+      },
+      {
+        "id": "joined",
+        "name": "joined",
+        "kind": "concat",
+        "width": 8,
+        "x": 760,
+        "y": 220,
+        "config": {
+          "type": "concat",
+          "high_width": 4,
+          "low_width": 4
+        }
+      },
+      {
+        "id": "result",
+        "name": "result",
+        "kind": "output",
+        "width": 8,
+        "x": 1120,
+        "y": 220
+      }
+    ],
+    "edges": [
+      {
+        "id": "e0",
+        "from": "literal",
+        "to": "upper",
+        "port": "a"
+      },
+      {
+        "id": "e1",
+        "from": "upper",
+        "to": "joined",
+        "port": "hi"
+      },
+      {
+        "id": "e2",
+        "from": "low",
+        "to": "joined",
+        "port": "lo"
+      },
+      {
+        "id": "e3",
+        "from": "joined",
+        "to": "result",
+        "port": "a"
+      }
+    ]
+  }
+}

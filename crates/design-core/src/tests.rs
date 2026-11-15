@@ -254,6 +254,8 @@ fn unsigned_inputs_reject_implicit_truncation_but_arithmetic_wraps() {
 fn auto_arrange_avoids_overlap_with_square_and_tall_nodes_in_same_column() {
     let mut workspace = Workspace::default();
     Arc::make_mut(&mut workspace.document).nodes.push(Node {
+        signed: false,
+        config: Default::default(),
         id: "extra_mux".into(),
         name: "extra_mux".into(),
         kind: Kind::Mux,

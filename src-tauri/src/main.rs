@@ -6,6 +6,7 @@ mod panels;
 mod preferences;
 mod recovery;
 mod sync;
+mod testbench_io;
 mod workspaces;
 use serde_json::{json, Value};
 use std::{
@@ -377,6 +378,7 @@ fn main() {
             command,
             preferences::preferences_open,
             save_vcd,
+            testbench_io::save_testbench_csv,
             workspaces::workspace_info,
             workspaces::workspace_pick,
             recovery::recovery_status,

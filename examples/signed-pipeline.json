@@ -1,0 +1,100 @@
+{
+  "schema": 1,
+  "document": {
+    "name": "SignedPipeline",
+    "nodes": [
+      {
+        "id": "inc",
+        "name": "inc",
+        "kind": "input",
+        "width": 8,
+        "signed": true,
+        "x": 40,
+        "y": 180
+      },
+      {
+        "id": "sum",
+        "name": "sum",
+        "kind": "add",
+        "width": 8,
+        "signed": true,
+        "x": 440,
+        "y": 180
+      },
+      {
+        "id": "acc",
+        "name": "acc",
+        "kind": "register",
+        "width": 8,
+        "signed": true,
+        "x": 840,
+        "y": 180
+      },
+      {
+        "id": "delay",
+        "name": "delay",
+        "kind": "register",
+        "width": 8,
+        "signed": true,
+        "x": 1240,
+        "y": 180
+      },
+      {
+        "id": "result",
+        "name": "result",
+        "kind": "output",
+        "width": 8,
+        "signed": true,
+        "x": 1640,
+        "y": 180
+      },
+      {
+        "id": "current",
+        "name": "current",
+        "kind": "output",
+        "width": 8,
+        "signed": true,
+        "x": 840,
+        "y": 540
+      }
+    ],
+    "edges": [
+      {
+        "id": "e0",
+        "from": "inc",
+        "to": "sum",
+        "port": "a"
+      },
+      {
+        "id": "e1",
+        "from": "acc",
+        "to": "sum",
+        "port": "b"
+      },
+      {
+        "id": "e2",
+        "from": "sum",
+        "to": "acc",
+        "port": "d"
+      },
+      {
+        "id": "e3",
+        "from": "acc",
+        "to": "delay",
+        "port": "d"
+      },
+      {
+        "id": "e4",
+        "from": "delay",
+        "to": "result",
+        "port": "a"
+      },
+      {
+        "id": "e5",
+        "from": "acc",
+        "to": "current",
+        "port": "a"
+      }
+    ]
+  }
+}

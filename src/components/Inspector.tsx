@@ -1,8 +1,17 @@
 import type { CSSProperties } from "react";
 import { nodeColor } from "../appearance";
 import { Trash2, Unplug, Box } from "lucide-react";
-import { patch } from "../store";
-import { ports, kinds, symbols, type Snapshot } from "../types";
+import { patch, action } from "../store";
+import {
+  defaultConfig,
+  inputSigned,
+  ports,
+  kinds,
+  symbols,
+  type Kind,
+  type NodeConfig,
+  type Snapshot,
+} from "../types";
 import { translation } from "../i18n";
 import { Hint, IconButton } from "./ui";
 export function Inspector({ snapshot }: { snapshot: Snapshot }) {
@@ -22,7 +31,7 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
       style={
         { "--inspector-tone": nodeColor(snapshot, node.kind) } as CSSProperties
       }
-      key={`${node.id}-${node.name}-${node.kind}-${node.width}`}
+      key={`${node.id}-${node.name}-${node.kind}-${node.width}-${node.signed}-${JSON.stringify(node.config)}`}
     >
       <div className="node-heading">
         <span className="large-symbol">{symbols[node.kind]}</span>
@@ -44,14 +53,39 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
         />
       </div>
       <div className="numeric-semantics">
-        <strong>{t("numericSemantics")}</strong>
-        <Hint text={t("simulationSemantics")} />
+        <strong>{t(node.signed ? "signedType" : "numericSemantics")}</strong>
+        <Hint
+          text={t(
+            ["zero_extend", "sign_extend"].includes(node.kind)
+              ? "extensionHint"
+              : "simulationSemantics",
+          )}
+        />
         {["add", "sub"].includes(node.kind) && (
           <small>{t("wrapSemantics")}</small>
         )}
         {node.kind === "register" && <small>{t("resetSemantics")}</small>}
       </div>
       <div className="fields">
+        <label>
+          <span>
+            {t("signalType")} <Hint text={t("propagateSignedHint")} />
+          </span>
+          <select
+            aria-label={t("signalType")}
+            value={node.signed ? "signed" : "unsigned"}
+            onChange={(e) =>
+              void action("design.set_signed", {
+                id: node.id,
+                signed: e.target.value === "signed",
+                expected_revision: snapshot.revision,
+              })
+            }
+          >
+            <option value="unsigned">{t("unsignedType")}</option>
+            <option value="signed">{t("signedType")}</option>
+          </select>
+        </label>
         <label>
           {t("name")}
           <input
@@ -79,14 +113,39 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
             value={node.kind}
             onChange={(e) =>
               void patch(
-                [{ op: "update_node", id: node.id, kind: e.target.value }],
+                [
+                  {
+                    op: "update_node",
+                    id: node.id,
+                    kind: e.target.value,
+                    width:
+                      e.target.value === "concat"
+                        ? Math.max(2, node.width)
+                        : node.width,
+                    config: defaultConfig(
+                      e.target.value as Kind,
+                      e.target.value === "concat"
+                        ? Math.max(2, node.width)
+                        : node.width,
+                    ),
+                  },
+                ],
                 `Change ${node.name}`,
               )
             }
           >
             {kinds.map((k) => (
               <option key={k} value={k}>
-                {k === "register" ? t("registerKind") : k.toUpperCase()}
+                {[
+                  "constant",
+                  "slice",
+                  "concat",
+                  "zero_extend",
+                  "sign_extend",
+                  "register",
+                ].includes(k)
+                  ? t(`${k}Kind` as "constantKind")
+                  : k.toUpperCase()}
               </option>
             ))}
           </select>
@@ -99,6 +158,7 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
               type="number"
               min={1}
               max={64}
+              readOnly={node.kind === "concat"}
               defaultValue={node.width}
               onBlur={async (e) => {
                 const input = e.currentTarget;
@@ -116,6 +176,68 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
           </div>
         </label>
       </div>
+      {node.config && node.config.type !== "none" && (
+        <div className="fields node-config-fields">
+          <Hint
+            text={t(
+              ["zero_extend", "sign_extend"].includes(node.kind)
+                ? "extensionHint"
+                : "bitNodeHint",
+            )}
+          />
+          {Object.entries(node.config)
+            .filter(([key]) => key !== "type")
+            .map(([key, value]) => {
+              const label = t(
+                (
+                  {
+                    value: "constantValue",
+                    input_width: "inputWidth",
+                    lsb: "sliceLsb",
+                    high_width: "highWidth",
+                    low_width: "lowWidth",
+                  } as const
+                )[key as "value"],
+              );
+              return (
+                <label key={key}>
+                  {label}
+                  <input
+                    aria-label={label}
+                    type={key === "value" ? "text" : "number"}
+                    min={key === "lsb" ? 0 : 1}
+                    max={key === "lsb" ? 63 : 64}
+                    maxLength={20}
+                    defaultValue={value}
+                    spellCheck={false}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                    }}
+                    onBlur={async (e) => {
+                      const input = e.currentTarget;
+                      const next =
+                        key === "value" ? input.value : Number(input.value);
+                      if (next === value) return;
+                      const config = {
+                        ...node.config,
+                        [key]: next,
+                      } as NodeConfig;
+                      const width =
+                        config.type === "concat"
+                          ? config.high_width + config.low_width
+                          : node.width;
+                      const result = await patch(
+                        [{ op: "update_node", id: node.id, config, width }],
+                        `Configure ${node.name}`,
+                      );
+                      if (!result) input.value = String(value);
+                    }}
+                  />
+                </label>
+              );
+            })}
+        </div>
+      )}
       <div className="inspector-section">
         <h3>{t("ports")}</h3>
         <div className="table-label">
@@ -129,7 +251,10 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
             return (
               <div key={port}>
                 <span className={`port-dot ${edge ? "connected" : ""}`} />
-                <code>{port}</code>
+                <code>
+                  {port}
+                  {inputSigned(node, port) ? " · s" : ""}
+                </code>
                 <span>{width}</span>
                 {edge ? (
                   <IconButton
@@ -157,7 +282,7 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
             <div className="port-table">
               <div>
                 <span className="port-dot connected" />
-                <code>y</code>
+                <code>y{node.signed ? " · s" : ""}</code>
                 <span>{node.width}</span>
               </div>
             </div>

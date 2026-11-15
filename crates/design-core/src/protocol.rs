@@ -3,20 +3,27 @@ use serde_json::{json, Value};
 pub fn tools() -> Vec<Value> {
     let revision = json!({"type":"integer","minimum":0});
     let identifier = json!({"type":"string","minLength":1,"maxLength":64});
-    let kind =
-        json!({"enum":["input","output","add","sub","and","or","xor","not","mux","register"]});
-    let node = json!({"type":"object","required":["id","name","kind","width","x","y"],"additionalProperties":false,"properties":{"id":identifier,"name":identifier,"kind":kind,"width":{"type":"integer","minimum":1,"maximum":64},"x":{"type":"number","minimum":-100000,"maximum":100000},"y":{"type":"number","minimum":-100000,"maximum":100000}}});
-    let edge = json!({"type":"object","required":["id","from","to","port"],"additionalProperties":false,"properties":{"id":identifier,"from":identifier,"to":identifier,"port":{"enum":["a","b","d0","d1","d2","sel","d"]}}});
+    let kind = json!({"enum":["input","output","add","sub","and","or","xor","not","mux","register","constant","slice","concat","zero_extend","sign_extend"]});
+    let config = json!({"oneOf":[
+        {"type":"object","required":["type","input_width"],"additionalProperties":false,"properties":{"type":{"enum":["zero_extend","sign_extend"]},"input_width":{"type":"integer","minimum":1,"maximum":64}}},
+        {"type":"object","required":["type"],"additionalProperties":false,"properties":{"type":{"const":"none"}}},
+        {"type":"object","required":["type","value"],"additionalProperties":false,"properties":{"type":{"const":"constant"},"value":{"type":"string","minLength":1,"maxLength":20}}},
+        {"type":"object","required":["type","input_width","lsb"],"additionalProperties":false,"properties":{"type":{"const":"slice"},"input_width":{"type":"integer","minimum":1,"maximum":64},"lsb":{"type":"integer","minimum":0,"maximum":63}}},
+        {"type":"object","required":["type","high_width","low_width"],"additionalProperties":false,"properties":{"type":{"const":"concat"},"high_width":{"type":"integer","minimum":1,"maximum":63},"low_width":{"type":"integer","minimum":1,"maximum":63}}}
+    ]});
+    let node = json!({"type":"object","required":["id","name","kind","width","x","y"],"additionalProperties":false,"properties":{"id":identifier,"name":identifier,"kind":kind,"signed":{"type":"boolean"},"config":config,"width":{"type":"integer","minimum":1,"maximum":64},"x":{"type":"number","minimum":-100000,"maximum":100000},"y":{"type":"number","minimum":-100000,"maximum":100000}}});
+    let edge = json!({"type":"object","required":["id","from","to","port"],"additionalProperties":false,"properties":{"id":identifier,"from":identifier,"to":identifier,"port":{"enum":["a","b","d0","d1","d2","sel","d","hi","lo"]}}});
     let op = json!({"oneOf":[
         {"type":"object","required":["op","node"],"additionalProperties":false,"properties":{"op":{"enum":["add_node"]},"node":node}},
         {"type":"object","required":["op","id"],"additionalProperties":false,"properties":{"op":{"enum":["remove_node","disconnect"]},"id":identifier}},
-        {"type":"object","required":["op","id"],"additionalProperties":false,"properties":{"op":{"enum":["update_node"]},"id":identifier,"name":{"type":["string","null"],"minLength":1,"maxLength":64},"kind":{"enum":["input","output","add","sub","and","or","xor","not","mux","register",null]},"width":{"type":["integer","null"],"minimum":1,"maximum":64},"x":{"type":["number","null"],"minimum":-100000,"maximum":100000},"y":{"type":["number","null"],"minimum":-100000,"maximum":100000}}},
+        {"type":"object","required":["op","id"],"additionalProperties":false,"properties":{"op":{"enum":["update_node"]},"id":identifier,"name":{"type":["string","null"],"minLength":1,"maxLength":64},"kind":{"enum":["input","output","add","sub","and","or","xor","not","mux","register","constant","slice","concat","zero_extend","sign_extend",null]},"signed":{"type":"boolean"},"config":config,"width":{"type":["integer","null"],"minimum":1,"maximum":64},"x":{"type":["number","null"],"minimum":-100000,"maximum":100000},"y":{"type":["number","null"],"minimum":-100000,"maximum":100000}}},
         {"type":"object","required":["op","edge"],"additionalProperties":false,"properties":{"op":{"enum":["connect"]},"edge":edge}}
     ]});
     let vectors = json!({"type":"array","minItems":1,"maxItems":4096,"items":{"type":"object","required":["inputs","expected"],"additionalProperties":false,"properties":{"inputs":{"type":"object","additionalProperties":{"type":"string"}},"expected":{"type":"object","additionalProperties":{"type":"string"}}}}});
     let patch = json!({"expected_revision":revision,"label":{"type":"string","maxLength":160},"operations":{"type":"array","items":op,"minItems":1,"maxItems":512}});
     let empty = json!({});
     let defs = vec![
+        ("design.set_signed", "Set signedness on the connected data path atomically; extension inputs and selectors are boundaries", json!({"expected_revision":revision,"id":identifier,"signed":{"type":"boolean"}}), vec!["expected_revision","id","signed"]),
         (
             "project.inspect",
             "Read shared workspace, revision, diagnostics and results",
@@ -77,6 +84,11 @@ pub fn tools() -> Vec<Value> {
             empty.clone(),
             vec![],
         ),
+        ("testbench.set", "Save a revision/version-guarded stimulus table without changing circuit history", json!({"expected_revision":revision,"expected_version":revision,"rows":{"type":"array","minItems":1,"maxItems":256,"items":{"type":"object","required":["reset","inputs","expected"],"additionalProperties":false,"properties":{"reset":{"type":"boolean"},"inputs":{"type":"object","additionalProperties":{"type":"string","maxLength":20}},"expected":{"type":"object","additionalProperties":{"type":"string","maxLength":20}}}}}}),vec!["expected_revision","expected_version","rows"]),
+        ("testbench.import_csv", "Atomically import cycle,reset,in.<name>,expect.<name> CSV columns", json!({"expected_revision":revision,"expected_version":revision,"source":{"type":"string","maxLength":262144}}),vec!["expected_revision","expected_version","source"]),
+        ("testbench.export_csv", "Export the saved stimulus table as CSV",json!({"expected_revision":revision,"expected_version":revision}),vec!["expected_revision","expected_version"]),
+        ("simulation.rtl_testbench", "Execute saved stimuli using generated RTL, compare all nodes with Rust and output expectations, retain native simulator VCD",json!({"expected_revision":revision,"expected_version":revision,"engine":{"enum":["icarus","verilator"]}}),vec!["expected_revision","expected_version","engine"]),
+        ("simulation.testbench", "Run saved stimuli with exact output expectations and shared trace/VCD",json!({"expected_revision":revision,"expected_version":revision}),vec!["expected_revision","expected_version"]),
         (
             "simulation.cycles",
             "Simulate rising clock edges with synchronous reset and return register and output samples",

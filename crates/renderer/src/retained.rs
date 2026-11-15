@@ -47,7 +47,12 @@ impl RetainedProjection {
         if source.edges.same_storage(&self.source.edges) {
             if let Some(changed) = source.nodes.changed(&self.source.nodes) {
                 if changed.iter().all(|(a, b)| {
-                    a.id == b.id && a.name == b.name && a.kind == b.kind && a.width == b.width
+                    a.id == b.id
+                        && a.name == b.name
+                        && a.kind == b.kind
+                        && a.width == b.width
+                        && a.config == b.config
+                        && a.signed == b.signed
                 }) {
                     let commands: Vec<_> = changed
                         .into_iter()
@@ -76,7 +81,12 @@ impl RetainedProjection {
             .iter()
             .filter_map(|(id, n)| {
                 new.get(id)
-                    .filter(|v| v.kind != n.kind || v.width != n.width)
+                    .filter(|v| {
+                        v.kind != n.kind
+                            || v.width != n.width
+                            || v.config != n.config
+                            || v.signed != n.signed
+                    })
                     .map(|_| (*id).clone())
             })
             .collect();
@@ -134,10 +144,13 @@ impl RetainedProjection {
         self.labels.retain(|id, _| new.contains_key(id));
         Arc::make_mut(&mut self.ids).retain(|id, _| new.contains_key(id));
         for n in &source.nodes {
-            if old
-                .get(&n.id)
-                .is_none_or(|v| v.name != n.name || v.kind != n.kind || v.width != n.width)
-            {
+            if old.get(&n.id).is_none_or(|v| {
+                v.name != n.name
+                    || v.kind != n.kind
+                    || v.width != n.width
+                    || v.config != n.config
+                    || v.signed != n.signed
+            }) {
                 let mut label = node_labels(n);
                 label.color = self
                     .node_colors

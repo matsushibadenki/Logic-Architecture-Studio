@@ -115,6 +115,9 @@ pub fn between(old: &Workspace, new: &Workspace) -> Value {
     }
     field!(locale);
     field!(node_colors);
+    if !std::sync::Arc::ptr_eq(&old.testbench, &new.testbench) {
+        field!(testbench);
+    }
     field!(panels);
     field!(report);
     if old.undo.is_empty() != new.undo.is_empty() {
@@ -146,7 +149,12 @@ pub fn between(old: &Workspace, new: &Workspace) -> Value {
     // Position changes cannot change graph diagnostics. Avoid revalidating
     // a large graph on every drag solely to construct the WebView delta.
     let semantic_change = |a: &design_core::Node, b: &design_core::Node| {
-        a.id != b.id || a.name != b.name || a.kind != b.kind || a.width != b.width
+        a.id != b.id
+            || a.name != b.name
+            || a.kind != b.kind
+            || a.width != b.width
+            || a.config != b.config
+            || a.signed != b.signed
     };
     let topology_changed = old.document.edges != new.document.edges
         || new
@@ -174,6 +182,8 @@ mod tests {
             name: "Large".into(),
             nodes: (0..2000)
                 .map(|i| design_core::Node {
+                    signed: false,
+                    config: Default::default(),
                     id: format!("n{i}"),
                     name: format!("n{i}"),
                     kind: design_core::Kind::Input,

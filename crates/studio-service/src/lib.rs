@@ -2,6 +2,7 @@ mod delta;
 pub mod native_sync;
 mod persistence;
 pub mod recovery;
+mod rtl_stimuli;
 mod rtl_verification;
 mod simulation;
 use design_core::Workspace;
@@ -105,6 +106,7 @@ impl Service {
                 .to_string();
             if ![
                 "design.apply_patch",
+                "design.set_signed",
                 "design.undo",
                 "design.redo",
                 "project.import",
@@ -131,6 +133,39 @@ impl Service {
         }
         if req.method == "tools.status" {
             return Ok(tool_status());
+        }
+        if req.method == "simulation.rtl_testbench" {
+            let _job = self
+                .rtl_job
+                .try_lock()
+                .map_err(|_| "RTL verification already running")?;
+            let (snapshot, session_version) = {
+                let state = self.state.lock().map_err(|e| e.to_string())?;
+                if req.args["expected_revision"].as_u64() != Some(state.revision)
+                    || req.args["expected_version"].as_u64() != Some(state.testbench.version)
+                {
+                    return Err("Circuit or stimulus table changed; reload before running".into());
+                }
+                let version = self.simulation.lock().map_err(|e| e.to_string())?.version();
+                (state.clone(), version)
+            };
+            let run = rtl_stimuli::run(
+                &self.root,
+                &snapshot,
+                req.args["engine"].as_str().ok_or("Missing engine")?,
+            )?;
+            let state = self.state.lock().map_err(|e| e.to_string())?;
+            if state.revision != snapshot.revision
+                || state.testbench.version != snapshot.testbench.version
+            {
+                return Err("Circuit or stimulus table changed during RTL execution; rerun".into());
+            }
+            let mut session = self.simulation.lock().map_err(|e| e.to_string())?;
+            if session.version() != session_version {
+                return Err("Simulation changed during RTL execution; rerun".into());
+            }
+            session.install_external(&state, run);
+            return session.execute(&state, "simulation.state", &json!({}));
         }
         if matches!(req.method.as_str(), "verify.rtl" | "verify.formal") {
             let _job = self
@@ -230,6 +265,7 @@ impl Service {
         if ![
             "project.inspect",
             "project.export",
+            "testbench.export_csv",
             "design.get_ir",
             "rtl.generate",
             "simulation.evaluate",
@@ -309,9 +345,13 @@ pub fn call(root: &Path, request: &Request) -> Result<Value, String> {
         .map_err(|e| e.to_string())?;
     writeln!(stream, "{}", serde_json::to_string(request).unwrap()).map_err(|e| e.to_string())?;
     let mut text = String::new();
-    BufReader::new(stream.take(16 * 1024 * 1024))
-        .read_line(&mut text)
-        .map_err(|e| e.to_string())?;
+    BufReader::new(stream.take(if request.method == "simulation.vcd" {
+        32 * 1024 * 1024
+    } else {
+        16 * 1024 * 1024
+    }))
+    .read_line(&mut text)
+    .map_err(|e| e.to_string())?;
     let response: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
     if response["ok"] == true {
         Ok(response["result"].clone())
@@ -454,6 +494,8 @@ pub fn mcp_message(
                     "rtl.generate",
                     "simulation.evaluate",
                     "simulation.cycles",
+                    "simulation.testbench",
+                    "testbench.export_csv",
                     "simulation.vcd",
                     "simulation.state",
                     "simulation.select",
@@ -520,6 +562,110 @@ pub fn mcp_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stimulus_table_persists_and_failed_runs_keep_previous_trace() {
+        let root = std::env::temp_dir().join(format!("las-stimuli-{}", std::process::id()));
+        let request = |method: &str, args| Request {
+            method: method.into(),
+            args,
+            actor: "gui".into(),
+        };
+        let service = Service::open(&root).unwrap();
+        let web = service
+            .execute(request("project.sync", json!({"scope":"web"})))
+            .unwrap();
+        let source = "reset,in.a,in.b,in.op,expect.result\n0,1,2,0,3\n0,3,4,0,8\n";
+        service
+            .execute(request(
+                "testbench.import_csv",
+                json!({"expected_revision":0,"expected_version":0,"source":source}),
+            ))
+            .unwrap();
+        let delta = service
+            .execute(request(
+                "project.sync",
+                json!({"scope":"web","cursor":web["cursor"]}),
+            ))
+            .unwrap();
+        assert_eq!(delta["deltas"][0]["set"]["testbench"]["version"], 1);
+        assert!(delta["deltas"][0].get("document").is_none());
+        let trace = service
+            .execute(request(
+                "simulation.testbench",
+                json!({"expected_revision":0,"expected_version":1}),
+            ))
+            .unwrap();
+        assert_eq!(trace["session"]["checks"]["passed"], 1);
+        assert_eq!(trace["session"]["checks"]["failures"][0]["actual"], "7");
+        assert_eq!(trace["session"]["testbench_version"], 1);
+        assert!(service
+            .execute(request(
+                "simulation.testbench",
+                json!({"expected_revision":0,"expected_version":0})
+            ))
+            .is_err());
+        assert_eq!(
+            service
+                .execute(request(
+                    "simulation.state",
+                    json!({"cursor":trace["cursor"]})
+                ))
+                .unwrap()["changed"],
+            false
+        );
+        let selected=service.execute(request("simulation.select",json!({"expected_revision":0,"trace_id":trace["session"]["id"],"index":0,"radix":16}))).unwrap();
+        assert_eq!(
+            selected["session"]["annotation"]["values"]["result"],
+            "0x00000003"
+        );
+        assert!(service
+            .execute(request(
+                "simulation.vcd",
+                json!({"expected_revision":0,"trace_id":trace["session"]["id"]})
+            ))
+            .unwrap()["source"]
+            .as_str()
+            .unwrap()
+            .contains("$enddefinitions"));
+        let cursor = service
+            .execute(request("project.sync", json!({"scope":"web"})))
+            .unwrap()["cursor"]
+            .clone();
+        service
+            .execute(request(
+                "testbench.export_csv",
+                json!({"expected_revision":0,"expected_version":1}),
+            ))
+            .unwrap();
+        assert_eq!(
+            service
+                .execute(request(
+                    "project.sync",
+                    json!({"scope":"web","cursor":cursor})
+                ))
+                .unwrap()["changed"],
+            false
+        );
+        drop(service);
+        let restored = Service::open(&root).unwrap();
+        let state = restored
+            .execute(request("project.inspect", json!({})))
+            .unwrap();
+        assert_eq!(state["revision"], 0);
+        assert_eq!(state["testbench"]["rows"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            restored
+                .execute(request(
+                    "simulation.testbench",
+                    json!({"expected_revision":0,"expected_version":1})
+                ))
+                .unwrap()["session"]["checks"]["total"],
+            2
+        );
+        drop(restored);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn appearance_persists_and_syncs_without_document_delta() {
         let root = std::env::temp_dir().join(format!("las-appearance-{}", std::process::id()));

@@ -15,6 +15,39 @@ pub enum Kind {
     Not,
     Mux,
     Register,
+    Constant,
+    Slice,
+    Concat,
+    ZeroExtend,
+    SignExtend,
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum NodeConfig {
+    #[default]
+    None,
+    Constant {
+        value: String,
+    },
+    Slice {
+        input_width: u8,
+        lsb: u8,
+    },
+    ZeroExtend {
+        input_width: u8,
+    },
+    SignExtend {
+        input_width: u8,
+    },
+    Concat {
+        high_width: u8,
+        low_width: u8,
+    },
+}
+impl NodeConfig {
+    fn is_none(&self) -> bool {
+        matches!(self, Self::None)
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -23,6 +56,10 @@ pub struct Node {
     pub name: String,
     pub kind: Kind,
     pub width: u8,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub signed: bool,
+    #[serde(default, skip_serializing_if = "NodeConfig::is_none")]
+    pub config: NodeConfig,
     pub x: f32,
     pub y: f32,
 }
@@ -120,12 +157,19 @@ impl Kind {
             Self::Not => "not",
             Self::Mux => "mux",
             Self::Register => "register",
+            Self::Constant => "constant",
+            Self::Slice => "slice",
+            Self::Concat => "concat",
+            Self::ZeroExtend => "zero_extend",
+            Self::SignExtend => "sign_extend",
         }
     }
 
     pub fn input_names(&self) -> &'static [&'static str] {
         match self {
-            Self::Input => &[],
+            Self::Input | Self::Constant => &[],
+            Self::Slice | Self::ZeroExtend | Self::SignExtend => &["a"],
+            Self::Concat => &["hi", "lo"],
             Self::Register => &["d"],
             Self::Output | Self::Not => &["a"],
             Self::Mux => &["d0", "d1", "d2", "sel"],
@@ -138,17 +182,118 @@ pub const NODE_WIDTH: f32 = 288.;
 pub fn node_height(kind: &Kind) -> f32 {
     NODE_WIDTH.max((kind.input_names().len().max(1) + 1) as f32 * 64.)
 }
+fn is_false(value: &bool) -> bool {
+    !value
+}
 impl Node {
+    pub fn input_signed(&self, port: &str) -> Option<bool> {
+        if port == "sel" {
+            Some(false)
+        } else if matches!(self.kind, Kind::ZeroExtend | Kind::SignExtend) {
+            None
+        } else {
+            Some(self.signed)
+        }
+    }
+    pub fn parse_value(&self, text: &str) -> Result<u64, String> {
+        parse_typed_value(text, self.width, self.signed)
+    }
+    pub fn decimal(&self, bits: u64) -> String {
+        if self.signed {
+            signed_value(bits, self.width).to_string()
+        } else {
+            bits.to_string()
+        }
+    }
+
     pub fn inputs(&self) -> Vec<(&'static str, u8)> {
         self.kind
             .input_names()
             .iter()
-            .map(|&name| (name, if name == "sel" { 2 } else { self.width }))
+            .map(|&name| {
+                (
+                    name,
+                    match (&self.config, name) {
+                        (
+                            NodeConfig::Slice { input_width, .. }
+                            | NodeConfig::ZeroExtend { input_width }
+                            | NodeConfig::SignExtend { input_width },
+                            "a",
+                        ) => *input_width,
+                        (NodeConfig::Concat { high_width, .. }, "hi") => *high_width,
+                        (NodeConfig::Concat { low_width, .. }, "lo") => *low_width,
+                        (_, "sel") => 2,
+                        _ => self.width,
+                    },
+                )
+            })
             .collect()
     }
 }
 
 impl Document {
+    pub fn parse_signals(
+        &self,
+        values: &BTreeMap<String, String>,
+        kind: Kind,
+    ) -> Result<BTreeMap<String, u64>, String> {
+        let ports: BTreeMap<_, _> = self
+            .nodes
+            .iter()
+            .filter(|n| n.kind == kind)
+            .map(|n| (n.name.as_str(), n))
+            .collect();
+        if values.keys().map(String::as_str).ne(ports.keys().copied()) {
+            return Err("Supply exactly the design signal names".into());
+        }
+        values
+            .iter()
+            .map(|(name, value)| {
+                Ok((
+                    name.clone(),
+                    ports[name.as_str()]
+                        .parse_value(value)
+                        .map_err(|e| format!("{name}: {e}"))?,
+                ))
+            })
+            .collect()
+    }
+    pub fn format_outputs(&self, values: &BTreeMap<String, u64>) -> BTreeMap<String, String> {
+        self.nodes
+            .iter()
+            .filter(|n| n.kind == Kind::Output)
+            .map(|n| (n.name.clone(), n.decimal(values[&n.name])))
+            .collect()
+    }
+    /// Propagate the equality constraints on connected data ports, including feedback.
+    /// Extension inputs are explicit conversion boundaries; selectors stay unsigned.
+    pub fn set_signed(&self, id: &str, signed: bool) -> Result<Self, String> {
+        self.node(id)?;
+        let mut neighbors: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for e in &self.edges {
+            let target = self.node(&e.to)?;
+            if e.port != "sel" && target.input_signed(&e.port).is_some() {
+                neighbors.entry(&e.from).or_default().push(&e.to);
+                neighbors.entry(&e.to).or_default().push(&e.from);
+            }
+        }
+        let mut seen = BTreeSet::new();
+        let mut queue = vec![id];
+        while let Some(next) = queue.pop() {
+            if seen.insert(next) {
+                if let Some(edges) = neighbors.get(next) {
+                    queue.extend(edges);
+                }
+            }
+        }
+        let mut doc = self.clone();
+        for id in seen {
+            doc.nodes.update(id, |n| n.signed = signed)?;
+        }
+        doc.validate(false)?;
+        Ok(doc)
+    }
+
     pub fn encoded_len(&self) -> usize {
         b"{\"name\":,\"nodes\":,\"edges\":}".len()
             + crate::encoded_size(&self.name)
@@ -170,6 +315,8 @@ impl Document {
         let nodes = specs
             .into_iter()
             .map(|(id, kind, width, x, y)| Node {
+                signed: false,
+                config: Default::default(),
                 id: id.into(),
                 name: id.into(),
                 kind,
@@ -239,6 +386,58 @@ impl Document {
             if n.width == 0 || n.width > 64 {
                 return Err("Width must be 1–64 bits".into());
             }
+            match (&n.kind, &n.config) {
+                (Kind::Constant, NodeConfig::Constant { value }) => {
+                    if value.len() > 20 || n.parse_value(value)? > mask(n.width) {
+                        return Err(format!(
+                            "Constant {} exceeds unsigned {}-bit range",
+                            n.name, n.width
+                        ));
+                    }
+                }
+                (Kind::Slice, NodeConfig::Slice { input_width, lsb }) => {
+                    if !(1..=64).contains(input_width)
+                        || u16::from(*lsb) + u16::from(n.width) > u16::from(*input_width)
+                    {
+                        return Err(
+                            "Slice range must fit the declared input width (1–64 bits)".into()
+                        );
+                    }
+                }
+                (
+                    Kind::Concat,
+                    NodeConfig::Concat {
+                        high_width,
+                        low_width,
+                    },
+                ) => {
+                    if *high_width == 0
+                        || *low_width == 0
+                        || u16::from(*high_width) + u16::from(*low_width) != u16::from(n.width)
+                    {
+                        return Err(
+                            "Concat output width must equal hi + lo (both nonzero, total ≤64)"
+                                .into(),
+                        );
+                    }
+                }
+                (Kind::ZeroExtend, NodeConfig::ZeroExtend { input_width })
+                | (Kind::SignExtend, NodeConfig::SignExtend { input_width }) => {
+                    if !(1..=n.width).contains(input_width) {
+                        return Err("Extension requires 1 ≤ input width ≤ output width ≤ 64; use a slice to narrow".into());
+                    }
+                }
+                (
+                    Kind::Constant
+                    | Kind::Slice
+                    | Kind::Concat
+                    | Kind::ZeroExtend
+                    | Kind::SignExtend,
+                    _,
+                ) => return Err("Missing or incompatible node configuration".into()),
+                (_, NodeConfig::None) => {}
+                _ => return Err("Configuration does not match node kind".into()),
+            }
             if !n.x.is_finite() || !n.y.is_finite() || n.x.abs() > 100000. || n.y.abs() > 100000. {
                 return Err("Invalid coordinates".into());
             }
@@ -264,6 +463,15 @@ impl Document {
                 return Err(format!(
                     "Width mismatch: {} ({} bits) → {}.{} ({} bits)",
                     source.name, source.width, target.name, e.port, width
+                ));
+            }
+            if target
+                .input_signed(&e.port)
+                .is_some_and(|signed| signed != source.signed)
+            {
+                return Err(format!(
+                    "Signedness mismatch: {} → {}.{}; use an explicit extension/cast boundary",
+                    source.name, target.name, e.port
                 ));
             }
             if !destinations.insert((&e.to, &e.port)) {
@@ -381,6 +589,30 @@ impl Document {
                     }
                     value
                 }
+                Kind::Constant => match &n.config {
+                    NodeConfig::Constant { value } => n.parse_value(value)?,
+                    _ => unreachable!(),
+                },
+                Kind::Slice => match n.config {
+                    NodeConfig::Slice { lsb, .. } => get("a") >> lsb,
+                    _ => unreachable!(),
+                },
+                Kind::Concat => match n.config {
+                    NodeConfig::Concat { low_width, .. } => (get("hi") << low_width) | get("lo"),
+                    _ => unreachable!(),
+                },
+                Kind::ZeroExtend => get("a"),
+                Kind::SignExtend => match n.config {
+                    NodeConfig::SignExtend { input_width } => {
+                        let value = get("a");
+                        if value & (1u64 << (input_width - 1)) != 0 {
+                            value | (mask(n.width) ^ mask(input_width))
+                        } else {
+                            value
+                        }
+                    }
+                    _ => unreachable!(),
+                },
                 Kind::Register => registers[id],
                 Kind::Output => get("a"),
                 Kind::Add => get("a").wrapping_add(get("b")),
@@ -432,20 +664,7 @@ impl Document {
             .collect();
         let mut samples = Vec::with_capacity(cycles.len());
         for cycle in cycles {
-            let inputs = cycle
-                .inputs
-                .iter()
-                .map(|(name, value)| Ok((name.clone(), crate::number(value)?)))
-                .collect::<Result<BTreeMap<_, _>, String>>()?;
-            if inputs.len()
-                != self
-                    .nodes
-                    .iter()
-                    .filter(|node| node.kind == Kind::Input)
-                    .count()
-            {
-                return Err("Supply exactly the design inputs each cycle".into());
-            }
+            let inputs = self.parse_signals(&cycle.inputs, Kind::Input)?;
             let before = self.evaluate_values(&inputs, &registers, &order)?;
             registers = register_inputs
                 .iter()
@@ -460,16 +679,12 @@ impl Document {
             samples.push(CycleSample {
                 values: after.clone(),
                 reset: cycle.reset,
-                outputs: self
-                    .outputs(&after)
-                    .into_iter()
-                    .map(|(name, value)| (name, value.to_string()))
-                    .collect(),
+                outputs: self.format_outputs(&self.outputs(&after)),
                 registers: self
                     .nodes
                     .iter()
                     .filter(|node| node.kind == Kind::Register)
-                    .map(|node| (node.name.clone(), registers[&node.id].to_string()))
+                    .map(|node| (node.name.clone(), node.decimal(registers[&node.id])))
                     .collect(),
             });
         }
@@ -485,12 +700,13 @@ impl Document {
             .filter(|n| matches!(n.kind, Kind::Input | Kind::Output))
             .map(|n| {
                 format!(
-                    "  {} wire [{}:0] n_{}",
+                    "  {} wire{} [{}:0] n_{}",
                     if n.kind == Kind::Input {
                         "input"
                     } else {
                         "output"
                     },
+                    if n.signed { " signed" } else { "" },
                     n.width - 1,
                     n.name
                 )
@@ -514,7 +730,12 @@ impl Document {
                 } else {
                     "wire"
                 };
-                rtl += &format!("  {storage} [{}:0] n_{};\n", n.width - 1, n.name);
+                rtl += &format!(
+                    "  {storage}{} [{}:0] n_{};\n",
+                    if n.signed { " signed" } else { "" },
+                    n.width - 1,
+                    n.name
+                );
             }
         }
         for id in self.order()? {
@@ -542,6 +763,36 @@ impl Document {
                 continue;
             }
             let expr = match n.kind {
+                Kind::Constant => match &n.config {
+                    NodeConfig::Constant { value } => {
+                        format!("{}'h{:X}", n.width, n.parse_value(value)?)
+                    }
+                    _ => unreachable!(),
+                },
+                Kind::Slice => match n.config {
+                    NodeConfig::Slice { lsb, .. } => {
+                        format!("{}[{}:{}]", get("a"), lsb + n.width - 1, lsb)
+                    }
+                    _ => unreachable!(),
+                },
+                Kind::Concat => format!("{{{}, {}}}", get("hi"), get("lo")),
+                Kind::ZeroExtend | Kind::SignExtend => match n.config {
+                    NodeConfig::ZeroExtend { input_width }
+                    | NodeConfig::SignExtend { input_width } => {
+                        let padding = n.width - input_width;
+                        if padding == 0 {
+                            get("a")
+                        } else {
+                            let fill = if n.kind == Kind::SignExtend {
+                                format!("{}[{}]", get("a"), input_width - 1)
+                            } else {
+                                "1'b0".into()
+                            };
+                            format!("{{{{{padding}{{{fill}}}}}, {}}}", get("a"))
+                        }
+                    }
+                    _ => unreachable!(),
+                },
                 Kind::Output => get("a"),
                 Kind::Not => format!("~{}", get("a")),
                 Kind::Mux => format!(
@@ -587,5 +838,49 @@ impl Entity for Node {
 impl Entity for Edge {
     fn id(&self) -> &str {
         &self.id
+    }
+}
+
+/// Signed interpretation for display only; simulation/HDL retain exact bit patterns.
+/// Width is a validated node width, including 64 (hence i128 for the subtraction).
+pub fn signed_value(value: u64, width: u8) -> i128 {
+    let bits = value & mask(width);
+    i128::from(bits)
+        - if bits & (1u64 << (width - 1)) != 0 {
+            1i128 << width
+        } else {
+            0
+        }
+}
+
+/// Decimal is a mathematical value; hex is an exact raw bit pattern.
+pub fn parse_typed_value(text: &str, width: u8, signed: bool) -> Result<u64, String> {
+    if !(1..=64).contains(&width) || text.is_empty() || text.len() > 20 {
+        return Err("Invalid signal value/width".into());
+    }
+    if let Some(hex) = text.strip_prefix("0x") {
+        let bits = u64::from_str_radix(hex, 16).map_err(|_| "Invalid hexadecimal bit pattern")?;
+        if bits > mask(width) {
+            return Err(format!("Value does not fit {width} bits"));
+        }
+        return Ok(bits);
+    }
+    if signed {
+        let value = text
+            .parse::<i128>()
+            .map_err(|_| "Expected signed decimal or hexadecimal bit pattern")?;
+        let bound = 1i128 << (width - 1);
+        if value < -bound || value >= bound {
+            return Err(format!("Value outside signed {width}-bit range"));
+        }
+        Ok((value & i128::from(mask(width))) as u64)
+    } else {
+        let bits = text
+            .parse::<u64>()
+            .map_err(|_| "Expected unsigned decimal or hexadecimal bit pattern")?;
+        if bits > mask(width) {
+            return Err(format!("Value outside unsigned {width}-bit range"));
+        }
+        Ok(bits)
     }
 }

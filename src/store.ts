@@ -29,6 +29,7 @@ export async function rpc<T = unknown>(
   if (
     [
       "design.apply_patch",
+      "design.set_signed",
       "design.undo",
       "design.redo",
       "project.import",

@@ -187,3 +187,69 @@ fn appearance_rebuilds_only_affected_nodes_and_source_wires() {
     cache.set_node_colors(&Default::default());
     compare(&cache, &Document::demo());
 }
+
+#[test]
+fn bit_node_configuration_changes_update_native_ports_and_labels() {
+    let project: serde_json::Value =
+        serde_json::from_str(include_str!("../../../examples/bit-nodes.json")).unwrap();
+    let mut doc: Document = serde_json::from_value(project["document"].clone()).unwrap();
+    doc.edges = vec![].into();
+    let mut cache = RetainedProjection::new(&doc).unwrap();
+    for (id, config) in [
+        (
+            "literal",
+            design_core::NodeConfig::Constant {
+                value: "0xCD".into(),
+            },
+        ),
+        (
+            "upper",
+            design_core::NodeConfig::Slice {
+                input_width: 16,
+                lsb: 8,
+            },
+        ),
+        (
+            "joined",
+            design_core::NodeConfig::Concat {
+                high_width: 3,
+                low_width: 5,
+            },
+        ),
+    ] {
+        doc.nodes.update(id, |n| n.config = config.clone()).unwrap();
+        doc.validate(false).unwrap();
+        cache.sync(&doc).unwrap();
+        compare(&cache, &doc);
+    }
+}
+
+#[test]
+fn extension_configuration_updates_port_width_and_signed_labels() {
+    let project: serde_json::Value =
+        serde_json::from_str(include_str!("../../../examples/extension-nodes.json")).unwrap();
+    let mut doc: Document = serde_json::from_value(project["document"].clone()).unwrap();
+    doc.edges = vec![].into();
+    let mut cache = RetainedProjection::new(&doc).unwrap();
+    assert!(!cache.labels["signed_bits"].inputs["a"].en.ends_with(" s"));
+    doc = doc.set_signed("signed_bits", true).unwrap();
+    cache.sync(&doc).unwrap();
+    compare(&cache, &doc);
+    assert!(cache.labels["signed_bits"].outputs["y"].en.ends_with(" s"));
+    assert!(!cache.labels["zero"].inputs["a"].en.ends_with(" s"));
+    for (id, config) in [
+        (
+            "zero",
+            design_core::NodeConfig::ZeroExtend { input_width: 1 },
+        ),
+        (
+            "signed_bits",
+            design_core::NodeConfig::SignExtend { input_width: 8 },
+        ),
+    ] {
+        doc.nodes.update(id, |n| n.config = config).unwrap();
+        doc.validate(false).unwrap();
+        cache.sync(&doc).unwrap();
+        compare(&cache, &doc);
+    }
+}
