@@ -2707,3 +2707,44 @@ html.toolbar-document,
   stroke: var(--color-accent);
   stroke-width: 2;
 }
+
+.module-editor {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100dvh;
+}
+
+.module-editor-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--color-rule);
+  background: var(--color-panel-deep);
+  font-size: 12px;
+}
+
+.module-editor-breadcrumb span {
+  overflow-wrap: anywhere;
+}
+
+.module-editor-columns {
+  display: grid;
+  grid-template-columns: minmax(105px, 180px) minmax(0, 1fr) minmax(150px, 270px);
+  min-height: 0;
+}
+
+.module-editor-columns > aside {
+  overflow: auto;
+  background: var(--color-panel);
+  border-inline: 1px solid var(--color-rule);
+}
+
+.module-inspector-fields {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}

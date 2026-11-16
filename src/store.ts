@@ -31,6 +31,7 @@ export async function rpc<T = unknown>(
   if (
     [
       "module.group",
+      "module.edit",
       "module.instantiate",
       "module.explode",
       "design.apply_patch",

@@ -308,6 +308,8 @@ fn main() {
                 view: Default::default(),
                 position: None,
                 down: false,
+                primary_press: None,
+                last_module_click: None,
                 modifiers: Default::default(),
                 graph_rect: [0., 56., 1000., 700.],
             })));
@@ -377,6 +379,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             command,
             preferences::preferences_open,
+            native::open_module,
+            native::return_to_workspace,
             save_vcd,
             testbench_io::save_testbench_csv,
             workspaces::workspace_info,

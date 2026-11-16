@@ -2025,6 +2025,8 @@ name = "logic-architecture-studio"
 version = "0.1.0"
 dependencies = [
  "design-core",
+ "objc2",
+ "objc2-app-kit",
  "rfd",
  "serde",
  "serde_json",

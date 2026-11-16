@@ -1,3 +1,4 @@
+import { ModuleEditor } from "./components/ModuleEditor";
 import { ModuleActions } from "./components/Modules";
 import { WorkspaceOpener } from "./components/WorkspaceOpener";
 import { ackFrame } from "./measurement";
@@ -41,6 +42,9 @@ import { RtlView, Experiments, download } from "./components/Views";
 const panelView = new URLSearchParams(location.search).get("panel");
 export default function App() {
   const { snapshot, busy, error, connected } = useStudio();
+  const [moduleName, openModule] = useState(() =>
+    new URLSearchParams(location.search).get("module"),
+  );
   const [mode, setMode] = useState<"architecture" | "rtl" | "experiments">(
     "architecture",
   );
@@ -145,6 +149,21 @@ export default function App() {
       <IconButton icon={X} label={t("close")} onClick={clearError} />
     </div>
   ) : null;
+  if (moduleName)
+    return (
+      <>
+        <ModuleEditor
+          key={moduleName}
+          root={snapshot}
+          initial={moduleName}
+          back={() => {
+            if (native) void nativeAction("return_to_workspace");
+            else openModule(null);
+          }}
+        />
+        {toast}
+      </>
+    );
   if (new URLSearchParams(location.search).has("native"))
     return (
       <main className="native-toolbar">
@@ -422,7 +441,7 @@ export default function App() {
         <section className="center-workspace">
           <div className="main-view">
             {mode === "architecture" ? (
-              <CircuitCanvas snapshot={snapshot} />
+              <CircuitCanvas snapshot={snapshot} openModule={openModule} />
             ) : mode === "rtl" ? (
               <RtlView snapshot={snapshot} />
             ) : (

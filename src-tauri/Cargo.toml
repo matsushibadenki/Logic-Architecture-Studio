@@ -18,3 +18,5 @@ custom-protocol = ["tauri/custom-protocol"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
 rfd = { version = "=0.15.4", default-features = false }
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "NSEvent", "NSResponder", "NSView", "NSWindow", "std"] }

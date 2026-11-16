@@ -1,8 +1,8 @@
 import { ModuleTree, ModuleActions } from "./Modules";
 import type { CSSProperties } from "react";
 import { nodeColor, symbolFontSize } from "../appearance";
-import { Trash2, Unplug, Box } from "lucide-react";
-import { patch, action } from "../store";
+import { Trash2, Unplug, Box, FolderOpen } from "lucide-react";
+import { patch, action, native, nativeAction } from "../store";
 import {
   defaultConfig,
   inputSigned,
@@ -16,7 +16,15 @@ import {
 } from "../types";
 import { translation } from "../i18n";
 import { Hint, IconButton } from "./ui";
-export function Inspector({ snapshot }: { snapshot: Snapshot }) {
+export function Inspector({
+  snapshot,
+  edit = patch,
+  scoped = false,
+}: {
+  snapshot: Snapshot;
+  edit?: typeof patch;
+  scoped?: boolean;
+}) {
   const t = translation(snapshot.locale);
   const node = snapshot.document.nodes.find((n) => n.id === snapshot.selected);
   if (!node)
@@ -27,6 +35,9 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
       </div>
     );
   const inputs = ports(node);
+  const moduleDefinition =
+    node.config?.type === "module" ? node.config.definition : null;
+  const boundary = scoped && (node.kind === "input" || node.kind === "output");
   return (
     <div
       className="inspector-content"
@@ -53,8 +64,9 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
         <IconButton
           icon={Trash2}
           label={t("delete")}
+          disabled={boundary}
           onClick={() =>
-            void patch(
+            void edit(
               [{ op: "remove_node", id: node.id }],
               `Remove ${node.name}`,
             )
@@ -81,7 +93,7 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
           </div>
         </>
       )}
-      <div className="fields">
+      <fieldset className="fields module-inspector-fields" disabled={boundary}>
         {node.kind !== "module" && (
           <>
             <label>
@@ -92,11 +104,22 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
                 aria-label={t("signalType")}
                 value={node.signed ? "signed" : "unsigned"}
                 onChange={(e) =>
-                  void action("design.set_signed", {
-                    id: node.id,
-                    signed: e.target.value === "signed",
-                    expected_revision: snapshot.revision,
-                  })
+                  scoped
+                    ? void edit(
+                        [
+                          {
+                            op: "update_node",
+                            id: node.id,
+                            signed: e.target.value === "signed",
+                          },
+                        ],
+                        t("signalType"),
+                      )
+                    : void action("design.set_signed", {
+                        id: node.id,
+                        signed: e.target.value === "signed",
+                        expected_revision: snapshot.revision,
+                      })
                 }
               >
                 <option value="unsigned">{t("unsignedType")}</option>
@@ -113,7 +136,7 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
             onBlur={async (e) => {
               const input = e.currentTarget;
               if (input.value !== node.name) {
-                const result = await patch(
+                const result = await edit(
                   [{ op: "update_node", id: node.id, name: e.target.value }],
                   `Rename ${node.name}`,
                 );
@@ -132,7 +155,7 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
             aria-label={t("kind")}
             value={node.kind}
             onChange={(e) =>
-              void patch(
+              void edit(
                 [
                   {
                     op: "update_node",
@@ -189,7 +212,7 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
                     const input = e.currentTarget;
                     const width = Number(input.value);
                     if (width !== node.width) {
-                      const result = await patch(
+                      const result = await edit(
                         [{ op: "update_node", id: node.id, width }],
                         `Resize ${node.name}`,
                       );
@@ -202,12 +225,23 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
             </label>
           </>
         )}
-      </div>
+      </fieldset>
       {node.config?.type === "module" && (
         <section className="inspector-section">
           <div className="section-title">
             <strong>{node.config.definition}</strong>
-            <ModuleActions snapshot={snapshot} />
+            {native && !scoped && moduleDefinition && (
+              <IconButton
+                icon={FolderOpen}
+                label={t("openModule")}
+                onClick={() =>
+                  void nativeAction("open_module", {
+                    definition: moduleDefinition,
+                  })
+                }
+              />
+            )}
+            {!scoped && <ModuleActions snapshot={snapshot} />}
           </div>
           <Hint text={t("moduleHint")} />
           <ModuleTree
@@ -268,7 +302,7 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
                           config.type === "concat"
                             ? config.high_width + config.low_width
                             : node.width;
-                        const result = await patch(
+                        const result = await edit(
                           [{ op: "update_node", id: node.id, config, width }],
                           `Configure ${node.name}`,
                         );
@@ -303,7 +337,7 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
                     icon={Unplug}
                     label={`${t("disconnect")} ${port}`}
                     onClick={() =>
-                      void patch(
+                      void edit(
                         [{ op: "disconnect", id: edge.id }],
                         `Disconnect ${node.name}.${port}`,
                       )

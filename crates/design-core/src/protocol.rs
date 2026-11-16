@@ -25,6 +25,7 @@ pub fn tools() -> Vec<Value> {
     let patch = json!({"expected_revision":revision,"label":{"type":"string","maxLength":160},"operations":{"type":"array","items":op,"minItems":1,"maxItems":512}});
     let empty = json!({});
     let defs = vec![
+        ("module.edit","Edit a shared module definition with a fixed interface",json!({"expected_revision":revision,"definition":identifier,"operations":{"type":"array","items":op,"minItems":1,"maxItems":512}}),vec!["expected_revision","definition","operations"]),
         ("module.group","Create a reusable module from selected processing nodes, preserving top-level IO",json!({"expected_revision":revision,"name":identifier,"ids":{"type":"array","minItems":1,"maxItems":512,"items":identifier}}),vec!["expected_revision","name","ids"]),
         ("module.instantiate","Place an independent instance of a reusable module",json!({"expected_revision":revision,"name":identifier,"x":{"type":"number","minimum":-100000,"maximum":100000},"y":{"type":"number","minimum":-100000,"maximum":100000}}),vec!["expected_revision","name","x","y"]),
         ("module.explode","Expand an instance into editable nodes, preserving connections and its reusable definition",json!({"expected_revision":revision,"id":identifier}),vec!["expected_revision","id"]),

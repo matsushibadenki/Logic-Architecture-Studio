@@ -35,10 +35,24 @@ import {
 } from "../nodeAppearance";
 import { Hint, IconButton } from "./ui";
 import { useSimulation } from "../simulation";
-export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
+export function CircuitCanvas({
+  snapshot,
+  definition,
+  edit = patch,
+  select = selectNodes,
+  openModule,
+}: {
+  snapshot: Snapshot;
+  definition?: string;
+  edit?: typeof patch;
+  select?: (ids: string[]) => unknown;
+  openModule?: (definition: string) => void;
+}) {
   const trace = useSimulation();
   const annotation =
-    trace?.revision === snapshot.revision ? trace.annotation : null;
+    !definition && trace?.revision === snapshot.revision
+      ? trace.annotation
+      : null;
   const t = translation(snapshot.locale),
     svg = useRef<SVGSVGElement>(null);
   const [mode, setMode] = useState<"select" | "connect">("select");
@@ -68,7 +82,6 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
     id: string | null;
     x: number;
     y: number;
-    moved: boolean;
     pan: boolean;
     ids: string[];
     original: string[];
@@ -76,14 +89,36 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
     toggleOff: boolean;
     revision: number;
     anchor: { x: number; y: number };
-    spacing: number;
+    snapSpacing: number | null;
   } | null>(null);
   const pos = (n: Node) =>
     drag?.revision === snapshot.revision && drag.ids.includes(n.id)
       ? { ...n, x: n.x + drag.dx, y: n.y + drag.dy }
       : n;
   const nodes = snapshot.document.nodes.map(pos);
-  const routes = useRoutes(snapshot, drag);
+  const routes = useRoutes(snapshot, drag, definition);
+  function dragAt(
+    g: NonNullable<typeof gesture.current>,
+    x: number,
+    y: number,
+  ) {
+    if (!g.id || g.toggleOff) return null;
+    const dx = x - g.x;
+    const dy = y - g.y;
+    if (Math.hypot(dx, dy) * scale < 3) return null;
+    return {
+      ids: g.ids,
+      revision: g.revision,
+      dx:
+        g.snapSpacing === null
+          ? dx
+          : snapToGrid(g.anchor.x + dx, g.snapSpacing) - g.anchor.x,
+      dy:
+        g.snapSpacing === null
+          ? dy
+          : snapToGrid(g.anchor.y + dy, g.snapSpacing) - g.anchor.y,
+    };
+  }
   function cancelGesture() {
     gesture.current = null;
     setDrag(null);
@@ -179,7 +214,6 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
       id,
       x: p.x,
       y: p.y,
-      moved: false,
       pan,
       ids,
       original: selectedIds,
@@ -187,7 +221,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
       toggleOff,
       revision: snapshot.revision,
       anchor: nodes.find((n) => n.id === id) ?? { x: 0, y: 0 },
-      spacing: spacing,
+      snapSpacing: e.altKey ? spacing : null,
     };
     if (!pan) setPreviewSelection(ids);
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -199,7 +233,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
       setMode("connect");
       setPointer(null);
     } else if (source) {
-      await patch(
+      await edit(
         [
           {
             op: "connect",
@@ -221,7 +255,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
   return (
     <div className="canvas-wrap">
       <div className="canvas-toolbar">
-        <ModuleActions snapshot={snapshot} />
+        {!definition && <ModuleActions snapshot={snapshot} />}
         <IconButton
           label={t("select")}
           icon={MousePointer2}
@@ -238,15 +272,17 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
           onClick={() => setMode("connect")}
         />
         <span className="separator" />
-        <IconButton
-          label={t("arrange")}
-          icon={Network}
-          onClick={() =>
-            void action("layout.auto_arrange", {
-              expected_revision: snapshot.revision,
-            })
-          }
-        />
+        {!definition && (
+          <IconButton
+            label={t("arrange")}
+            icon={Network}
+            onClick={() =>
+              void action("layout.auto_arrange", {
+                expected_revision: snapshot.revision,
+              })
+            }
+          />
+        )}
         <IconButton label={t("fit")} icon={Scan} onClick={fit} />
         <span className="separator" />
         <IconButton
@@ -302,7 +338,6 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
           if (!g) return;
           const dx = p.x - g.x,
             dy = p.y - g.y;
-          g.moved = Math.hypot(dx, dy) * scale >= 3;
           if (g.pan) {
             setCamera((c) => ({
               ...c,
@@ -314,16 +349,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                 (e.movementY * camera.h) / (svg.current?.clientHeight || 1),
             }));
           } else if (g.id && !g.toggleOff) {
-            setDrag(
-              g.moved
-                ? {
-                    ids: g.ids,
-                    revision: g.revision,
-                    dx: snapToGrid(g.anchor.x + dx, g.spacing) - g.anchor.x,
-                    dy: snapToGrid(g.anchor.y + dy, g.spacing) - g.anchor.y,
-                  }
-                : null,
-            );
+            setDrag(dragAt(g, p.x, p.y));
           } else if (!g.id) {
             const box = {
               x: Math.min(g.x, p.x),
@@ -347,37 +373,35 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
             setPreviewSelection(g.ids);
           }
         }}
-        onPointerUp={async () => {
+        onPointerUp={async (event) => {
           const g = gesture.current;
           gesture.current = null;
           if (!g) return;
           try {
             if (!g.pan) {
-              const result = await action("view.select_nodes", {
-                expected_revision: g.revision,
-                ids: g.ids,
-              });
-              if (
-                result !== undefined &&
-                g.id &&
-                !g.toggleOff &&
-                g.moved &&
-                drag &&
-                (drag.dx || drag.dy)
-              ) {
-                await action("design.apply_patch", {
-                  expected_revision: g.revision,
-                  label: `Move ${g.ids.length} nodes`,
-                  operations: snapshot.document.nodes
-                    .filter((n) => g.ids.includes(n.id))
-                    .map((n) => ({
-                      op: "update_node",
-                      id: n.id,
-                      x: n.x + drag.dx,
-                      y: n.y + drag.dy,
-                    })),
-                });
+              if (g.revision !== snapshot.revision) return;
+              const release = point(event.clientX, event.clientY);
+              const finalDrag = dragAt(g, release.x, release.y);
+              if (finalDrag && (finalDrag.dx || finalDrag.dy)) {
+                setDrag(finalDrag);
+                const operations = snapshot.document.nodes
+                  .filter((n) => g.ids.includes(n.id))
+                  .map((n) => ({
+                    op: "update_node",
+                    id: n.id,
+                    x: n.x + finalDrag.dx,
+                    y: n.y + finalDrag.dy,
+                  }));
+                const label = `Move ${g.ids.length} nodes`;
+                if (definition) await edit(operations, label);
+                else
+                  await action("design.apply_patch", {
+                    expected_revision: g.revision,
+                    label,
+                    operations,
+                  });
               }
+              await select(g.ids);
             }
           } finally {
             cancelGesture();
@@ -481,7 +505,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                 onClick={(ev) => {
                   ev.stopPropagation();
                   if (mode === "connect")
-                    void patch(
+                    void edit(
                       [{ op: "disconnect", id: e.id }],
                       `Disconnect ${e.id}`,
                     );
@@ -528,9 +552,26 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
               role="button"
               aria-pressed={selected}
               aria-label={`${n.name}, ${n.kind}, ${n.width}${n.signed ? "s" : "u"}`}
+              onDoubleClick={(event) => {
+                if (n.config?.type === "module" && openModule) {
+                  event.stopPropagation();
+                  openModule(n.config.definition);
+                }
+              }}
               onKeyDown={(e) => {
+                if (
+                  e.key === "Enter" &&
+                  n.config?.type === "module" &&
+                  openModule &&
+                  !e.shiftKey &&
+                  !e.metaKey &&
+                  !e.ctrlKey
+                ) {
+                  openModule(n.config.definition);
+                  return;
+                }
                 if (e.key === "Enter")
-                  void selectNodes(
+                  void select(
                     e.shiftKey || e.metaKey || e.ctrlKey
                       ? selectedIds.includes(n.id)
                         ? selectedIds.filter((id) => id !== n.id)
@@ -538,7 +579,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                       : [n.id],
                   );
                 if (e.key === "Delete" || e.key === "Backspace")
-                  void patch(
+                  void edit(
                     [{ op: "remove_node", id: n.id }],
                     `Remove ${n.name}`,
                   );

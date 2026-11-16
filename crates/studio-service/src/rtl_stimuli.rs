@@ -347,6 +347,87 @@ mod tests {
         }
     }
 
+    #[test]
+    #[ignore = "Requires installed Icarus and Yosys"]
+    fn exported_hierarchy_matches_signed_pipeline_and_synthesizes() {
+        let w = workspace(true);
+        let (first, inner) = w
+            .document
+            .group_module(&["sum".into(), "acc".into()], "Accumulator")
+            .unwrap();
+        let (nested, _) = first
+            .group_module(&[inner, "delay".into()], "Pipeline")
+            .unwrap();
+        let source = nested.rtl().unwrap();
+        assert_eq!(source.matches("module las_def_Accumulator (").count(), 1);
+        assert_eq!(source.matches("module las_def_Pipeline (").count(), 1);
+        assert!(source.contains("las_def_Accumulator inst_"));
+        assert!(source.contains("las_def_Pipeline inst_"));
+        let (cycles, samples, _) = w.testbench.run(&nested).unwrap();
+        let mut bench = String::from(
+            "module test_export;
+             reg clk = 0, reset = 0;
+             reg signed [7:0] inc;
+             wire signed [7:0] current, result;
+             las_SignedPipeline dut(.n_inc(inc), .n_current(current), .n_result(result),
+                                    .las_clk(clk), .las_reset(reset));
+             initial begin
+",
+        );
+        for (index, (cycle, sample)) in cycles.iter().zip(&samples).enumerate() {
+            bench += &format!(
+                "inc = {}; reset = {}; #5; clk = 1; #1;
+                 if (current !== {} || result !== {}) $fatal(1, \"cycle {}\");
+                 #4; clk = 0;\n",
+                cycle.inputs["inc"],
+                u8::from(cycle.reset),
+                sample.outputs["current"],
+                sample.outputs["result"],
+                index + 1
+            );
+        }
+        bench += "$finish; end endmodule\n";
+        let root = Root::new("hierarchical-export");
+        fs::write(root.0.join("design.v"), &source).unwrap();
+        fs::write(root.0.join("bench.v"), bench).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        for (tool, args) in [
+            (
+                "iverilog",
+                &[
+                    "-g2012",
+                    "-s",
+                    "test_export",
+                    "-o",
+                    "sim.vvp",
+                    "design.v",
+                    "bench.v",
+                ][..],
+            ),
+            ("vvp", &["sim.vvp"][..]),
+        ] {
+            let binary = crate::executable(tool).unwrap();
+            assert!(
+                execute(&binary, args, &root.0, "export.log", deadline).unwrap(),
+                "{tool}: {}",
+                log(&root.0, "export.log"),
+            );
+        }
+        let synthesis = crate::synthesis(&root.0, 0, &source, &nested.name).unwrap();
+        assert_eq!(synthesis["success"], true, "{}", synthesis["log"]);
+        let artifact = Path::new(synthesis["artifact_directory"].as_str().unwrap());
+        let netlist: Value =
+            serde_json::from_slice(&fs::read(artifact.join("netlist.json")).unwrap()).unwrap();
+        assert_eq!(
+            netlist["modules"]["las_SignedPipeline"]["attributes"]["top"]
+                .as_str()
+                .unwrap()
+                .trim_start_matches('0'),
+            "1"
+        );
+        assert!(netlist["modules"]["las_def_Accumulator"].is_object());
+    }
+
     fn workspace(sequential: bool) -> Workspace {
         let project: Value = serde_json::from_str(if sequential {
             include_str!("../../../examples/signed-pipeline.json")

@@ -6,7 +6,8 @@
     "recovery",
     "workspace-start",
     "panel-*",
-    "preferences"
+    "preferences",
+    "module-*"
   ],
   "permissions": [
     "core:default",

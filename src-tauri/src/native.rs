@@ -19,6 +19,8 @@ pub struct Native {
     pub view: EditorView,
     pub position: Option<[f32; 2]>,
     pub down: bool,
+    pub primary_press: Option<[f32; 2]>,
+    pub last_module_click: Option<(String, [f32; 2], ClickTime)>,
     pub modifiers: ModifiersState,
     pub graph_rect: [f32; 4],
     pub dirty: bool,
@@ -27,7 +29,155 @@ pub struct Native {
     pub selection_cursor: String,
     pub pending_revision: Option<(String, u64)>,
 }
+pub struct ClickTime {
+    received: std::time::Instant,
+    appkit: Option<f64>,
+    system_double_click: bool,
+}
+
+impl ClickTime {
+    fn follows(&self, previous: &Self, interval: f64) -> bool {
+        if self.system_double_click {
+            return true;
+        }
+        match (self.appkit, previous.appkit) {
+            (Some(now), Some(before)) if now > before => now - before <= interval,
+            _ => {
+                self.received
+                    .duration_since(previous.received)
+                    .as_secs_f64()
+                    <= interval
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+struct AppKitClick {
+    position: [f32; 2],
+    timestamp: f64,
+    double_click: bool,
+    modifiers: ModifiersState,
+}
+
+// Tao queues mouse motion and clicks separately. Use the AppKit event when
+// available so a delayed redraw or missing motion event cannot skew the click.
+#[cfg(target_os = "macos")]
+fn appkit_click(window: &tauri::Window, state: ElementState) -> Option<AppKitClick> {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSEventType};
+    let mtm = MainThreadMarker::new()?;
+    let event = NSApplication::sharedApplication(mtm).currentEvent()?;
+    let expected = match state {
+        ElementState::Pressed => NSEventType::LeftMouseDown,
+        ElementState::Released => NSEventType::LeftMouseUp,
+        _ => return None,
+    };
+    if event.r#type() != expected {
+        return None;
+    }
+    let event_window = event.window(mtm)?;
+    if std::ptr::from_ref(&*event_window).cast::<std::ffi::c_void>()
+        != window.ns_window().ok()?.cast_const()
+    {
+        return None;
+    }
+    let view = event_window.contentView()?;
+    let point = view.convertPoint_fromView(event.locationInWindow(), None);
+    let scale = event_window.backingScaleFactor();
+    let flags = event.modifierFlags();
+    let mut modifiers = ModifiersState::empty();
+    modifiers.set(
+        ModifiersState::SHIFT,
+        flags.contains(NSEventModifierFlags::Shift),
+    );
+    modifiers.set(
+        ModifiersState::CONTROL,
+        flags.contains(NSEventModifierFlags::Control),
+    );
+    modifiers.set(
+        ModifiersState::ALT,
+        flags.contains(NSEventModifierFlags::Option),
+    );
+    modifiers.set(
+        ModifiersState::SUPER,
+        flags.contains(NSEventModifierFlags::Command),
+    );
+    Some(AppKitClick {
+        position: [
+            (point.x * scale) as f32,
+            ((view.bounds().size.height - point.y) * scale) as f32,
+        ],
+        timestamp: event.timestamp(),
+        double_click: event.clickCount() == 2,
+        modifiers,
+    })
+}
+
+fn double_click_interval() -> f64 {
+    #[cfg(target_os = "macos")]
+    {
+        objc2_app_kit::NSEvent::doubleClickInterval()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        0.5
+    }
+}
+
+fn in_canvas(point: [f32; 2], rect: [f32; 4]) -> bool {
+    point[0] >= rect[0]
+        && point[1] >= rect[1]
+        && point[0] < rect[0] + rect[2]
+        && point[1] < rect[1] + rect[3]
+}
+
 pub type Shared = Arc<Mutex<Native>>;
+#[tauri::command]
+pub async fn open_module(app: tauri::AppHandle, definition: String) -> Result<(), String> {
+    let exists = app
+        .state::<super::sync::Cache>()
+        .0
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.document.modules.contains_key(&definition));
+    if !exists {
+        return Err("Unknown module definition".into());
+    }
+    show_module_window(&app, definition).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn return_to_workspace(window: tauri::WebviewWindow) -> Result<(), String> {
+    if !window.label().starts_with("module-") {
+        return Err("Expected a module editor window".into());
+    }
+    let workspace = window
+        .app_handle()
+        .get_window("workspace")
+        .ok_or("Workspace is closed")?;
+    window.close().map_err(|e| e.to_string())?;
+    workspace.set_focus().map_err(|e| e.to_string())
+}
+
+fn show_module_window(app: &tauri::AppHandle, definition: String) -> tauri::Result<()> {
+    let label = format!("module-{definition}");
+    if let Some(window) = app.get_webview_window(&label) {
+        window.unminimize()?;
+        return window.set_focus();
+    }
+    tauri::WebviewWindowBuilder::new(
+        app,
+        label,
+        tauri::WebviewUrl::App(format!("index.html?module={definition}").into()),
+    )
+    .title(definition)
+    .inner_size(1180., 760.)
+    .min_inner_size(740., 460.)
+    .build()?;
+    Ok(())
+}
 pub fn redraw(app: &tauri::AppHandle) {
     let Some(w) = app.get_window("workspace") else {
         return;
@@ -216,34 +366,59 @@ impl Plugin<EventLoopMessage> for Input {
         let mut n = shared.lock().unwrap();
         n.dirty |= !matches!(event, WindowEvent::CursorMoved { .. }) || n.down;
         let mut input = None;
+        let mut primary_click = None;
         match event {
             WindowEvent::ModifiersChanged(modifiers) => {
                 n.modifiers = *modifiers;
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let p = [position.x as f32, position.y as f32];
-                if p[0] >= n.graph_rect[0]
-                    && p[1] >= n.graph_rect[1]
-                    && p[0] < n.graph_rect[0] + n.graph_rect[2]
-                    && p[1] < n.graph_rect[1] + n.graph_rect[3]
-                {
+                if n.down {
+                    // The press owns the gesture until release. Crossing a dock
+                    // boundary must not discard the preview or its final position.
                     n.position = Some(p);
-                    if n.down {
-                        input = Some(PointerEvent::Move {
-                            pointer: 0,
-                            position: p,
-                        });
-                    }
+                    input = Some(PointerEvent::Move {
+                        pointer: 0,
+                        position: p,
+                    });
                 } else {
-                    input = Some(PointerEvent::Cancel);
-                    n.position = None;
-                    n.down = false;
+                    n.position = in_canvas(p, n.graph_rect).then_some(p);
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                if let Some(p) = n.position {
+                let time = ClickTime {
+                    received: std::time::Instant::now(),
+                    appkit: None,
+                    system_double_click: false,
+                };
+                let position = n.position;
+                #[cfg(target_os = "macos")]
+                let (position, time) = if let Some(click) = (*button == MouseButton::Left)
+                    .then(|| appkit_click(&w, *state))
+                    .flatten()
+                {
+                    n.modifiers = click.modifiers;
+                    (
+                        Some(click.position),
+                        ClickTime {
+                            appkit: Some(click.timestamp),
+                            system_double_click: click.double_click,
+                            ..time
+                        },
+                    )
+                } else {
+                    (position, time)
+                };
+                if let Some(p) = position.filter(|point| {
+                    in_canvas(*point, n.graph_rect) || (n.down && *state == ElementState::Released)
+                }) {
+                    n.position = Some(p);
                     if *state == ElementState::Pressed {
+                        let snap = n.modifiers.alt_key();
+                        n.view.interaction.set_grid_snap(snap);
                         n.down = true;
+                        // Track the click independently of additive selection.
+                        n.primary_press = (*button == MouseButton::Left).then_some(p);
                         input = Some(PointerEvent::Down {
                             pointer: 0,
                             position: p,
@@ -258,11 +433,25 @@ impl Plugin<EventLoopMessage> for Input {
                         });
                     } else if n.down {
                         n.down = false;
+                        if *button == MouseButton::Left
+                            && n.primary_press.take().is_some_and(|start| {
+                                (start[0] - p[0]).hypot(start[1] - p[1]) <= 5. * scale as f32
+                            })
+                        {
+                            primary_click = Some((p, time));
+                        } else {
+                            n.last_module_click = None;
+                        }
                         input = Some(PointerEvent::Up {
                             pointer: 0,
                             position: p,
                         });
                     }
+                } else if n.down {
+                    n.down = false;
+                    n.primary_press = None;
+                    n.last_module_click = None;
+                    input = Some(PointerEvent::Cancel);
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
@@ -278,13 +467,16 @@ impl Plugin<EventLoopMessage> for Input {
                 }
             }
             WindowEvent::Focused(false) => {
+                n.position = None;
+                n.primary_press = None;
+                n.last_module_click = None;
                 n.modifiers = ModifiersState::empty();
                 n.down = false;
                 input = Some(PointerEvent::Cancel);
             }
-            WindowEvent::CursorLeft { .. } => {
-                n.down = false;
-                input = Some(PointerEvent::Cancel);
+            WindowEvent::CursorLeft { .. } if !n.down => {
+                n.position = None;
+                n.last_module_click = None;
             }
             _ => {}
         }
@@ -306,6 +498,35 @@ impl Plugin<EventLoopMessage> for Input {
                         let moving = ops.iter().any(|op| {
                             matches!(op, design_core::Operation::UpdateNode { x: Some(_), .. })
                         });
+                        if let Some((point, time)) = primary_click.filter(|_| ops.is_empty()) {
+                            let target = n.view.node_at(point).and_then(|id| {
+                                let node = doc.node(id).ok()?;
+                                match &node.config {
+                                    design_core::NodeConfig::Module { definition, .. } => {
+                                        Some((id.to_owned(), definition.clone()))
+                                    }
+                                    _ => None,
+                                }
+                            });
+                            let previous = n.last_module_click.take();
+                            if let Some((id, definition)) = target {
+                                if previous.is_some_and(|(old_id, old_point, old_time)| {
+                                    old_id == id
+                                        && time.follows(&old_time, double_click_interval())
+                                        && (old_point[0] - point[0]).hypot(old_point[1] - point[1])
+                                            <= 5. * scale as f32
+                                }) {
+                                    let app = self.app.clone();
+                                    tauri::async_runtime::spawn(async move {
+                                        if let Err(error) = open_module(app, definition).await {
+                                            eprintln!("Module editor: {error}");
+                                        }
+                                    });
+                                } else {
+                                    n.last_module_click = Some((id, point, time));
+                                }
+                            }
+                        }
                         if !n.view.interaction.is_active() {
                             let ids = n.view.selected_ids();
                             let previous = s["selection"]
@@ -384,5 +605,32 @@ impl Plugin<EventLoopMessage> for Input {
         drop(n);
         redraw(&self.app);
         false
+    }
+}
+
+#[cfg(test)]
+mod click_tests {
+    use super::ClickTime;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn appkit_timestamps_preserve_click_interval_when_dispatch_is_delayed() {
+        let started = Instant::now();
+        let first = ClickTime {
+            received: started,
+            appkit: Some(10.0),
+            system_double_click: false,
+        };
+        let delayed = ClickTime {
+            received: started + Duration::from_secs(1),
+            appkit: Some(10.25),
+            system_double_click: false,
+        };
+        assert!(delayed.follows(&first, 0.5));
+        let separate = ClickTime {
+            appkit: Some(11.0),
+            ..delayed
+        };
+        assert!(!separate.follows(&first, 0.5));
     }
 }

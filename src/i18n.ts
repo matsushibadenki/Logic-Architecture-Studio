@@ -1,13 +1,15 @@
 import type { Locale } from "./types";
 const en = {
   modules: "Modules",
+  openModule: "Open module",
+  moduleUnavailable: "Module definition unavailable",
   moduleKind: "Module",
   moduleName: "Module name",
   createModule: "Create module from selection",
   expandModule: "Expand module into editable nodes",
   instantiateModule: "Place module",
   moduleHint:
-    "Create reusable modules from processing nodes. Top-level inputs/outputs stay outside. Modules can contain other modules. Expand an instance to edit it; existing definitions and other instances stay unchanged.",
+    "Create reusable modules from processing nodes. Top-level inputs/outputs stay outside. Modules can contain other modules. Double-click a module to edit its shared definition. Expand an instance to edit a separate copy.",
 
   routingBlocked:
     "No clear route. Move overlapping nodes or leave more space near ports.",
@@ -154,7 +156,7 @@ const en = {
   gpuHint:
     "Native Rust / wgpu geometry preview. Labels and editing remain in the main view.",
   multiSelectHint:
-    "Shift/⌘/Ctrl-click to select multiple nodes, or drag empty space to box-select (up to 512). Drag a selected node to move the group. Right/middle-drag to pan. The grabbed node’s top-left snaps to the dots; group offsets are preserved.",
+    "Shift/⌘/Ctrl-click to select multiple nodes, or drag empty space to box-select (up to 512). Drag a selected node to move the group. Right/middle-drag to pan. Drag freely, or hold Option/Alt when starting the drag to snap to the dots. Group offsets are preserved.",
   connectHint:
     "Select an output port, then an input port. Click a wire to remove it in connection mode.",
   contract:
@@ -245,13 +247,15 @@ const en = {
 type Dictionary = typeof en;
 const ja: Dictionary = {
   modules: "モジュール",
+  openModule: "モジュールを開く",
+  moduleUnavailable: "モジュール定義を開けません",
   moduleKind: "モジュール",
   moduleName: "モジュール名",
   createModule: "選択範囲をモジュール化",
   expandModule: "モジュールをノードへ展開",
   instantiateModule: "モジュールを配置",
   moduleHint:
-    "演算ノードの選択範囲から再利用できるモジュールを作成します。トップレベルの入出力は外側に保持します。モジュールを含めて再度まとめると入れ子にできます。編集はインスタンスを展開して行います。既存の定義や他の配置には影響しません。",
+    "演算ノードの選択範囲から再利用できるモジュールを作成します。トップレベルの入出力は外側に保持します。モジュールを含めて再度まとめると入れ子にできます。モジュールをダブルクリックすると共有定義を編集できます。個別に編集する場合はインスタンスを展開します。",
 
   routingBlocked:
     "経路を確保できません。重なったノードを移動するか、ポート周辺の間隔を広げてください。",
@@ -398,7 +402,7 @@ const ja: Dictionary = {
   gpuHint:
     "Rust / wgpuのネイティブ描画プレビュー。ラベルと編集操作はメイン画面で行います。",
   multiSelectHint:
-    "Shift／⌘／Ctrl＋クリック、または余白のドラッグで複数選択（最大512ノード）。選択中のノードをドラッグすると一括移動。右／中ボタンのドラッグでパン。つかんだノードの左上がドットに吸着し、複数選択の相対位置を保ちます。",
+    "Shift／⌘／Ctrl＋クリック、または余白のドラッグで複数選択（最大512ノード）。選択中のノードをドラッグすると一括移動。右／中ボタンのドラッグでパン。通常は自由に移動し、Option／Altを押してドラッグを始めるとドットに吸着します。複数選択の相対位置は保ちます。",
   connectHint:
     "出力ポート、入力ポートの順に選択します。接続モードで配線をクリックすると解除します。",
   contract:
@@ -488,13 +492,15 @@ const ja: Dictionary = {
 };
 const zh: Dictionary = {
   modules: "模块",
+  openModule: "打开模块",
+  moduleUnavailable: "无法打开模块定义",
   moduleKind: "模块",
   moduleName: "模块名称",
   createModule: "将所选节点创建为模块",
   expandModule: "将模块展开为可编辑节点",
   instantiateModule: "放置模块",
   moduleHint:
-    "将处理节点创建为可复用模块，顶层输入和输出保持在外部。模块可以包含其他模块。展开实例后可编辑，现有定义和其他实例不会改变。",
+    "将处理节点创建为可复用模块，顶层输入和输出保持在外部。模块可以包含其他模块。双击模块可编辑共享定义。要独立编辑某个实例，请先将其展开。",
 
   routingBlocked: "无法找到畅通路径。请移动重叠的节点或增大端口附近的间距。",
   stimuli: "激励表",
@@ -637,7 +643,7 @@ const zh: Dictionary = {
   gpu: "GPU 几何视图",
   gpuHint: "Rust / wgpu 原生几何预览。标签和编辑操作保留在主视图。",
   multiSelectHint:
-    "按住 Shift/⌘/Ctrl 点击可多选，或拖动空白区域框选（最多512个节点）。拖动已选节点可整体移动。右键或中键拖动可平移。拖动节点的左上角吸附到网格点，保持多选节点间的相对位置。",
+    "按住 Shift/⌘/Ctrl 点击可多选，或拖动空白区域框选（最多512个节点）。拖动已选节点可整体移动。右键或中键拖动可平移。默认自由拖动，按住 Option/Alt 开始拖动可吸附到网格点。多选节点的相对位置保持不变。",
   connectHint: "先选择输出端口，再选择输入端口。在连接模式下点击连线即可断开。",
   contract:
     "ALU 规范：op 0 = ADD、1 = AND、2/3 = XOR。320 个固定种子测试向量，仅为行为验证，不是形式证明。",

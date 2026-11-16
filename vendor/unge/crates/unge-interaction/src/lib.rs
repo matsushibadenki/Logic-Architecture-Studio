@@ -403,6 +403,17 @@ enum Hit {
     Port(PortHit),
     Empty,
 }
+pub fn node_at(
+    doc: &Document,
+    index: &SpatialIndex,
+    viewport: Viewport,
+    screen: [f32; 2],
+) -> Option<Id> {
+    match hit_test(doc, index, viewport, viewport.to_world(screen)) {
+        Hit::Node(id) => Some(id),
+        _ => None,
+    }
+}
 fn hit_test(doc: &Document, index: &SpatialIndex, viewport: Viewport, point: [f32; 2]) -> Hit {
     let radius = 8.0 / viewport.zoom;
     let area = Rect {

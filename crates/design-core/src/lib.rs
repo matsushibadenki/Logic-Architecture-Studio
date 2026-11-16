@@ -21,12 +21,19 @@ pub enum Operation {
     },
     UpdateNode {
         id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         kind: Option<Kind>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         width: Option<u8>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         signed: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         config: Option<NodeConfig>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         x: Option<f32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         y: Option<f32>,
     },
     Connect {
@@ -427,6 +434,35 @@ impl Workspace {
                 let document: Document = parse(project["document"].clone())?;
                 document.validate(false)?;
                 self.commit(document, "Import project".into(), actor);
+                Ok(self.reply(compact))
+            }
+            "module.edit" => {
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Edit {
+                    expected_revision: u64,
+                    definition: String,
+                    operations: Vec<Operation>,
+                }
+                let edit: Edit = parse(args)?;
+                self.check_revision(edit.expected_revision)?;
+                let graph = self.document.definition_graph(&edit.definition)?;
+                let ports = self.document.modules[&edit.definition].ports();
+                let graph = apply(&graph, &edit.operations)?;
+                let changed = ModuleDefinition {
+                    nodes: graph.nodes,
+                    edges: graph.edges,
+                };
+                if changed.ports() != ports {
+                    return Err(
+                        "Module port names, widths, signedness and order must stay fixed".into(),
+                    );
+                }
+                let mut next = (*self.document).clone();
+                next.modules
+                    .insert(edit.definition.clone(), Arc::new(changed));
+                next.validate(false)?;
+                self.commit(next, format!("Edit module {}", edit.definition), actor);
                 Ok(self.reply(compact))
             }
             "design.propose_patch" | "design.apply_patch" => {

@@ -30,7 +30,7 @@ Select a table row or waveform cursor to annotate all native canvas nodes and wi
 
 Use Shift/⌘/Ctrl-click to add/remove nodes from the selection, or left-drag empty canvas space to box-select (up to 512 nodes). Drag a selected node to move the group; one Undo restores the entire move. Right/middle-drag pans the canvas. Port labels use 24 world units, twice the previous native size.
 
-Node dragging snaps the grabbed node’s top-left to the visible dots (24 world units, 120 in overview). Group moves preserve relative positions. Clicking alone does not snap; movement within the same grid cell creates no Undo entry.
+Nodes move freely by default. Hold Option/Alt when starting the drag to snap the grabbed node’s top-left to the visible dots (24 world units, 120 in overview). Group moves preserve relative positions. Clicking alone does not snap; a snapped drag that leaves the node in place creates no Undo entry.
 
 ## Preferences
 
@@ -44,4 +44,4 @@ Select processing nodes and use **Create module from selection**. Shift/⌘/Ctrl
 
 Click a module in the library to place an independent instance. Group instances together with other nodes to build nested modules. Inspect the recursive tree in the inspector, or use **Expand module into nodes** to edit one instance without changing its definition or other instances; regroup under a new name afterward. Undo/Redo and restart persistence include the library and nested structure.
 
-Simulation and Verilog generation elaborate the hierarchy; emitted HDL is currently flat. Limits: 64 definitions, 16 ports per side, 16 nesting levels, 2,000 expanded nodes / 8,000 edges. See [module semantics and QA](MODULES.md).
+Verilog export preserves reachable module definitions and named instances. Full-node simulation comparisons use the elaborated circuit. Limits: 64 definitions, 16 ports per side, 16 nesting levels, 2,000 expanded nodes / 8,000 edges. See [module semantics and QA](MODULES.md).

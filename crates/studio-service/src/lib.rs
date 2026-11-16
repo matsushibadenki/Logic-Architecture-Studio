@@ -110,6 +110,7 @@ impl Service {
                 .to_string();
             if ![
                 "module.group",
+                "module.edit",
                 "module.instantiate",
                 "module.explode",
                 "design.apply_patch",
@@ -203,11 +204,15 @@ impl Service {
             };
         }
         if req.method == "synthesis.run" {
-            let (revision, source) = {
+            let (revision, source, name) = {
                 let state = self.state.lock().map_err(|e| e.to_string())?;
-                (state.revision, state.document.rtl()?)
+                (
+                    state.revision,
+                    state.document.rtl()?,
+                    state.document.name.clone(),
+                )
             };
-            return synthesis(&self.root, revision, &source);
+            return synthesis(&self.root, revision, &source, &name);
         }
         let mut state = self.state.lock().map_err(|e| e.to_string())?;
         if req.method.starts_with("simulation.") {
@@ -405,7 +410,12 @@ pub fn tool_status() -> Value {
     .map(|name| json!({"name":name,"installed":executable(name).is_some()}))
     .collect::<Vec<_>>())
 }
-fn synthesis(root: &Path, revision: u64, source: &str) -> Result<Value, String> {
+fn synthesis(root: &Path, revision: u64, source: &str, name: &str) -> Result<Value, String> {
+    if !design_core::valid_identifier(name) {
+        return Err("Invalid synthesis top module".into());
+    }
+    let script =
+        format!("read_verilog design.v; synth -top las_{name}; stat; write_json netlist.json");
     let binary =
         executable("yosys").ok_or("Yosys is not installed; no synthesis results were generated")?;
     let run = std::time::SystemTime::now()
@@ -419,10 +429,7 @@ fn synthesis(root: &Path, revision: u64, source: &str) -> Result<Value, String> 
     let err = log.try_clone().map_err(|e| e.to_string())?;
     let mut child = std::process::Command::new(binary)
         .current_dir(&dir)
-        .args([
-            "-p",
-            "read_verilog design.v; synth; stat; write_json netlist.json",
-        ])
+        .args(["-p", &script])
         .stdin(std::process::Stdio::null())
         .stdout(log)
         .stderr(err)
@@ -827,6 +834,41 @@ mod tests {
         assert_eq!(response["result"]["protocolVersion"], "2025-11-25");
         let result=mcp_message(json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"design.undo","arguments":{"expected_revision":0}}}),&mut init,false,|_|panic!("read-only must not execute writes")).unwrap();
         assert_eq!(result["result"]["isError"], true);
+    }
+    #[test]
+    fn serialized_native_move_commits_and_replays() {
+        let root = std::env::temp_dir().join(format!("las-native-move-{}", std::process::id()));
+        let service = Service::open(&root).unwrap();
+        let movement = design_core::Patch {
+            expected_revision: 0,
+            label: "Native gesture".into(),
+            operations: vec![design_core::Operation::UpdateNode {
+                id: "add".into(),
+                name: None,
+                kind: None,
+                width: None,
+                signed: None,
+                config: None,
+                x: Some(451.25),
+                y: Some(83.5),
+            }],
+        };
+        let ack = service
+            .execute(Request {
+                method: "view.command".into(),
+                args: json!({"method":"design.apply_patch","args":movement}),
+                actor: "native".into(),
+            })
+            .unwrap();
+        assert_eq!(ack, json!({"revision":1,"committed":true}));
+        drop(service);
+        let reopened = Service::open(&root).unwrap();
+        let state = reopened.state.lock().unwrap();
+        let node = state.document.node("add").unwrap();
+        assert_eq!((node.x, node.y), (451.25, 83.5));
+        drop(state);
+        drop(reopened);
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn failed_move_log_write_does_not_publish_state_or_cursor() {

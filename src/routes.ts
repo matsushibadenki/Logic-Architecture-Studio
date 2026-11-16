@@ -7,7 +7,11 @@ type Drag = { ids: string[]; revision: number; dx: number; dy: number } | null;
 // Rust owns routing in both renderers. Coalesce rapid pointer moves: at most
 // one request in flight, then process only the latest preview. Stale replies
 // never attach wires to a different revision or pointer position.
-export function useRoutes(snapshot: Snapshot, drag: Drag): Paths {
+export function useRoutes(
+  snapshot: Snapshot,
+  drag: Drag,
+  definition?: string,
+): Paths {
   const [result, setResult] = useState<{ key: string; paths: Paths } | null>(
     null,
   );
@@ -21,7 +25,12 @@ export function useRoutes(snapshot: Snapshot, drag: Drag): Paths {
       document: snapshot.document,
       epoch: identity.current.epoch + 1,
     };
-  const key = JSON.stringify([identity.current.epoch, snapshot.revision, drag]);
+  const key = JSON.stringify([
+    identity.current.epoch,
+    snapshot.revision,
+    drag,
+    definition,
+  ]);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -42,7 +51,7 @@ export function useRoutes(snapshot: Snapshot, drag: Drag): Paths {
         : [];
     queue.current = {
       key,
-      args: { expected_revision: snapshot.revision, positions },
+      args: { expected_revision: snapshot.revision, positions, definition },
     };
     const run = async () => {
       if (running.current) return;
@@ -73,6 +82,6 @@ export function useRoutes(snapshot: Snapshot, drag: Drag): Paths {
       active = false;
       cancelAnimationFrame(frame);
     };
-  }, [snapshot.document, snapshot.revision, key]);
+  }, [snapshot.document, snapshot.revision, key, definition]);
   return result?.key === key ? result.paths : {};
 }

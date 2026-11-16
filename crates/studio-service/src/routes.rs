@@ -16,6 +16,7 @@ struct Position {
 #[serde(deny_unknown_fields)]
 struct Args {
     expected_revision: u64,
+    definition: Option<String>,
     #[serde(default)]
     positions: Vec<Position>,
 }
@@ -33,7 +34,10 @@ pub fn execute(service: &Service, args: Value) -> Result<Value, String> {
         if state.revision != args.expected_revision {
             return Err("Revision conflict".into());
         }
-        state.document.clone()
+        match args.definition.as_deref() {
+            Some(name) => std::sync::Arc::new(state.document.definition_graph(name)?),
+            None => state.document.clone(),
+        }
     };
     let mut positions = BTreeMap::new();
     let mut seen = BTreeSet::new();

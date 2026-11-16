@@ -32,6 +32,16 @@ fn scoped(path: &str, id: &str) -> String {
     format!("m_{:x}", digest)[..42].to_string()
 }
 impl Document {
+    pub fn definition_graph(&self, name: &str) -> Result<Self, String> {
+        let definition = self.modules.get(name).ok_or("Unknown module definition")?;
+        Ok(Self {
+            name: name.into(),
+            nodes: definition.nodes.clone(),
+            edges: definition.edges.clone(),
+            modules: self.modules.clone(),
+        })
+    }
+
     pub fn has_modules(&self) -> bool {
         self.nodes.iter().any(|n| n.kind == Kind::Module)
     }
@@ -198,13 +208,35 @@ impl Document {
             modules: BTreeMap::new(),
         })
     }
-    pub fn hierarchical_rtl(&self) -> Result<String, String> {
-        let mut rtl = self.flatten()?.rtl()?;
-        rtl.insert_str(
-            0,
-            "// Module instances are elaborated into stable, independent signals.\n",
-        );
-        Ok(rtl)
+    // Called only after full graph validation, which rejects recursive references.
+    pub(crate) fn emit_rtl_definitions(
+        &self,
+        nodes: &entities::Entities<Node>,
+        clocked: &mut BTreeMap<String, bool>,
+        rtl: &mut String,
+    ) -> Result<bool, String> {
+        let mut sequential = false;
+        for node in nodes {
+            if let NodeConfig::Module { definition, .. } = &node.config {
+                if !clocked.contains_key(definition) {
+                    let def = &self.modules[definition];
+                    let child_clocked = self.emit_rtl_definitions(&def.nodes, clocked, rtl)?;
+                    let graph = Document {
+                        name: definition.clone(),
+                        nodes: def.nodes.clone(),
+                        edges: def.edges.clone(),
+                        modules: BTreeMap::new(),
+                    };
+                    *rtl += &graph.rtl_module(&format!("las_def_{definition}"), clocked)?;
+                    rtl.push('\n');
+                    clocked.insert(definition.clone(), child_clocked);
+                }
+                sequential |= clocked[definition];
+            } else {
+                sequential |= node.kind == Kind::Register;
+            }
+        }
+        Ok(sequential)
     }
     pub fn module_node(
         &self,
@@ -583,6 +615,49 @@ mod tests {
         assert_eq!(restored, nested);
         assert_eq!(restored.rtl().unwrap(), nested.rtl().unwrap());
     }
+    #[test]
+    fn shared_definition_edit_rejects_interface_changes_and_supports_undo() {
+        let mut workspace = Workspace::default();
+        workspace
+            .dispatch(
+                "module.group",
+                serde_json::json!({"expected_revision":0,"name":"Adder","ids":["add"]}),
+                "test",
+            )
+            .unwrap();
+        let before = workspace.document.clone();
+        let edit = |id: &str, changes: serde_json::Value| {
+            let mut op = serde_json::json!({"op":"update_node","id":id});
+            op.as_object_mut()
+                .unwrap()
+                .extend(changes.as_object().unwrap().clone());
+            serde_json::json!({"expected_revision":1,"definition":"Adder","operations":[op]})
+        };
+        assert!(workspace
+            .dispatch(
+                "module.edit",
+                edit("in0", serde_json::json!({"name":"changed"})),
+                "test",
+            )
+            .is_err());
+        assert_eq!(workspace.document, before);
+        let patch = edit("add", serde_json::json!({"kind":"sub"}));
+        workspace
+            .dispatch("module.edit", patch.clone(), "test")
+            .unwrap();
+        let inputs = BTreeMap::from([("a".into(), 9), ("b".into(), 3), ("op".into(), 0)]);
+        assert_eq!(workspace.document.evaluate(&inputs).unwrap()["result"], 6);
+        assert!(workspace.dispatch("module.edit", patch, "test").is_err());
+        workspace
+            .dispatch(
+                "design.undo",
+                serde_json::json!({"expected_revision":2}),
+                "test",
+            )
+            .unwrap();
+        assert_eq!(workspace.document, before);
+    }
+
     #[test]
     fn recursion_bad_interfaces_and_stale_edits_are_rejected() {
         let (mut doc, id) = Document::demo()

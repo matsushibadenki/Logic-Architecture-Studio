@@ -85,80 +85,90 @@ export function Hierarchy({ snapshot }: { snapshot: Snapshot }) {
     </section>
   );
 }
-export function Library({ snapshot }: { snapshot: Snapshot }) {
+export function Library({
+  snapshot,
+  edit = patch,
+  scoped = false,
+}: {
+  snapshot: Snapshot;
+  edit?: typeof patch;
+  scoped?: boolean;
+}) {
   const t = translation(snapshot.locale);
   return (
     <div className="library-list">
-      <ModuleLibrary snapshot={snapshot} />
-      {kinds.map((kind) => (
-        <button
-          key={kind}
-          title={`${t("newNode")}: ${["constant", "slice", "concat", "zero_extend", "sign_extend", "register"].includes(kind) ? t(`${kind}Kind` as "constantKind") : kind}`}
-          onClick={() => {
-            const id = `n_${crypto.randomUUID().replaceAll("-", "")}`;
-            const prefix =
-              kind === "input"
-                ? "in"
-                : kind === "output"
-                  ? "out"
-                  : kind === "register"
-                    ? "reg"
-                    : kind;
-            const used = new Set(
-              snapshot.document.nodes.map((node) => node.name),
-            );
-            let index = 0;
-            while (used.has(`${prefix}${index}`)) index += 1;
-            const name = `${prefix}${index}`;
-            void patch(
-              [
-                {
-                  op: "add_node",
-                  node: {
-                    id,
-                    name,
-                    kind,
-                    width: 32,
-                    signed: kind === "sign_extend",
-                    config: defaultConfig(kind, 32),
-                    x: 200 + (snapshot.document.nodes.length % 4) * 60,
-                    y: 100 + (snapshot.document.nodes.length % 5) * 80,
+      {!scoped && <ModuleLibrary snapshot={snapshot} />}
+      {kinds
+        .filter((kind) => !scoped || !["input", "output"].includes(kind))
+        .map((kind) => (
+          <button
+            key={kind}
+            title={`${t("newNode")}: ${["constant", "slice", "concat", "zero_extend", "sign_extend", "register"].includes(kind) ? t(`${kind}Kind` as "constantKind") : kind}`}
+            onClick={() => {
+              const id = `n_${crypto.randomUUID().replaceAll("-", "")}`;
+              const prefix =
+                kind === "input"
+                  ? "in"
+                  : kind === "output"
+                    ? "out"
+                    : kind === "register"
+                      ? "reg"
+                      : kind;
+              const used = new Set(
+                snapshot.document.nodes.map((node) => node.name),
+              );
+              let index = 0;
+              while (used.has(`${prefix}${index}`)) index += 1;
+              const name = `${prefix}${index}`;
+              void edit(
+                [
+                  {
+                    op: "add_node",
+                    node: {
+                      id,
+                      name,
+                      kind,
+                      width: 32,
+                      signed: kind === "sign_extend",
+                      config: defaultConfig(kind, 32),
+                      x: 200 + (snapshot.document.nodes.length % 4) * 60,
+                      y: 100 + (snapshot.document.nodes.length % 5) * 80,
+                    },
                   },
-                },
-              ],
-              `Add ${kind}`,
-            );
-          }}
-        >
-          <span
-            className="library-symbol"
-            style={{
-              color: nodeColor(snapshot, kind),
-              fontSize: symbolFontSize(symbols[kind], 30, 19),
+                ],
+                `Add ${kind}`,
+              );
             }}
           >
-            {symbols[kind]}
-          </span>
-          <span>
-            {kind === "input"
-              ? t("inputs")
-              : kind === "output"
-                ? t("outputs")
-                : kind === "register"
-                  ? t("registerKind")
-                  : [
-                        "constant",
-                        "slice",
-                        "concat",
-                        "zero_extend",
-                        "sign_extend",
-                      ].includes(kind)
-                    ? t(`${kind}Kind` as "constantKind")
-                    : kind.toUpperCase()}
-          </span>
-          <Plus size={13} />
-        </button>
-      ))}
+            <span
+              className="library-symbol"
+              style={{
+                color: nodeColor(snapshot, kind),
+                fontSize: symbolFontSize(symbols[kind], 30, 19),
+              }}
+            >
+              {symbols[kind]}
+            </span>
+            <span>
+              {kind === "input"
+                ? t("inputs")
+                : kind === "output"
+                  ? t("outputs")
+                  : kind === "register"
+                    ? t("registerKind")
+                    : [
+                          "constant",
+                          "slice",
+                          "concat",
+                          "zero_extend",
+                          "sign_extend",
+                        ].includes(kind)
+                      ? t(`${kind}Kind` as "constantKind")
+                      : kind.toUpperCase()}
+            </span>
+            <Plus size={13} />
+          </button>
+        ))}
     </div>
   );
 }

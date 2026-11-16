@@ -8,19 +8,22 @@ Implemented 2026-11-16. Rust owns the saved module library and graph. Native GPU
 2. Use the group icon. The library offers an optional HDL identifier field; the toolbar chooses a unique name automatically.
 3. Click a definition in the module library to instantiate it again. Instance register state is independent.
 4. Group existing instances with other nodes to create a larger module. The inspector tree reveals nested definitions.
-5. Expand a selected instance one level to edit its nodes. Regroup under a new definition name afterward. Existing definitions and other instances remain unchanged.
+5. Double-click a module to edit its shared definition. Double-click a child to enter it. Use the breadcrumbs to return to a parent or the top-level circuit. Desktop opens a module editor window. The inspector also has an Open module button for the selected module.
+6. Expand a selected instance one level when you need to edit that copy separately. Regroup under a new definition name afterward.
 
 Top-level input/output nodes remain outside a group so external signal names and saved stimulus columns stay valid. Incoming connections from the same external output share one input boundary. Outgoing signals and unused selected outputs become module outputs. Unconnected input ports are exposed for later wiring. Width and signedness belong to each port, including modules with heterogeneous outputs.
 
-Definitions are immutable shared snapshots stored in `Document.modules`. A module node references a definition and caches its typed interface; validation requires that cache to match exactly. Edges use `source_port`, defaulting to `y` for legacy circuits. Group/place/expand are revision-checked atomic changes with Undo/Redo and durable persistence. Module changes are included in native and WebView deltas.
+Definitions are stored as shared snapshots in `Document.modules`. Editing replaces one definition in a revision-checked transaction. All its instances use the replacement. Port names, order, widths and signedness are fixed during internal editing. A module node references a definition and caches its typed interface; validation requires that cache to match exactly. Edges use `source_port`, defaulting to `y` for legacy circuits. Group/place/expand are revision-checked atomic changes with Undo/Redo and durable persistence. Module changes are included in native and WebView deltas.
 
 ## Execution and boundaries
 
-Simulation, stimulus execution, external HDL comparisons and Verilog output elaborate instances into primitive nodes with deterministic, independently scoped identifiers. Boundary buffers preserve width/signedness and register feedback. The saved graph remains hierarchical; **generated Verilog is currently flat**. VCD/traces expose elaborated internal signals. Module blocks do not yet display separate values for every output port.
+Verilog export emits each referenced definition once and preserves named instances, typed ports and nested connections. Clock and synchronous reset pass through definitions that contain registers, including through nested instances. Simulation, stimulus execution and full-node external HDL comparisons elaborate the hierarchy into independently scoped primitive nodes. VCD/traces expose elaborated internal signals. Module blocks do not yet display separate values for every output port.
 
-Recursive references, invalid interfaces, multiple drivers, incompatible widths/signedness and flattened combinational cycles are rejected. Limits are 64 definitions, 16 inputs and 16 outputs per definition, 16 nested instances, 2,000 expanded nodes and 8,000 expanded connections. A grouping selection is limited to 512 processing nodes. Shared-definition editing, canvas drilldown, parameter overrides and hierarchy-preserving HDL are not implemented.
+Recursive references, invalid interfaces, multiple drivers, incompatible widths/signedness and flattened combinational cycles are rejected. Limits are 64 definitions, 16 inputs and 16 outputs per definition, 16 nested instances, 2,000 expanded nodes and 8,000 expanded connections. A grouping selection is limited to 512 processing nodes. Parameter overrides are not implemented.
 
 ## Verification
+
+- Hierarchical Verilog export was run with Icarus on a two-level signed pipeline. Both outputs matched Rust across all seven saved cycles, including reset and overflow. Yosys synthesis selected the exported top module and kept the nested definition in the JSON netlist.
 
 - Core module tests: combinational equivalence before/after grouping, nesting and expansion; repeated definitions; JSON round trip; invalid/recursive definitions; stale revisions and Undo; signed sequential/reset equivalence; independent register values with distinct inputs; expansion of module output-to-input feedback.
 - Service test `modules_persist_and_replay_in_native_delta`: exact native delta replay, Rust evaluation and workspace reopen.

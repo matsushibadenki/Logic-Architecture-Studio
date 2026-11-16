@@ -47,7 +47,6 @@ impl EditorView {
     ) -> Result<Vec<design_core::Operation>, String> {
         self.sync_document(doc)?;
         let cached = self.cached.as_ref().unwrap();
-        self.interaction.set_grid_snap(true);
         let command = self
             .interaction
             .handle(
@@ -112,6 +111,18 @@ impl EditorView {
         }
         Ok(())
     }
+    pub fn node_at(&self, position: [f32; 2]) -> Option<&str> {
+        let cached = self.cached.as_ref()?;
+        let id = unge_interaction::node_at(
+            cached.document(),
+            cached.index.spatial_index(),
+            self.viewport,
+            position,
+        )?;
+        self.ids
+            .iter()
+            .find_map(|(key, render_id)| (*render_id == id).then_some(key.as_str()))
+    }
     pub fn selected_ids(&self) -> Vec<String> {
         self.ids
             .iter()
@@ -133,12 +144,13 @@ impl EditorView {
 mod tests {
     use super::*;
     #[test]
-    fn grid_snap_matches_preview_across_zoom_pan_and_negative_coordinates() {
-        for (zoom, xy, delta, expected) in [
-            (1., [40., 80.], [37., 19.], [72., 96.]),
-            (0.8, [-37., -51.], [8., 9.], [-24., -48.]),
-            (1.6, [-37., -51.], [1., 15.], [-24., -24.]),
-            (0.2, [40., 80.], [37., 19.], [120., 120.]),
+    fn free_and_grid_drag_match_preview_across_zoom_and_pan() {
+        for (snap, zoom, xy, delta, expected) in [
+            (false, 0.2, [40., 80.], [37., 19.], [77., 99.]),
+            (true, 1., [40., 80.], [37., 19.], [72., 96.]),
+            (true, 0.8, [-37., -51.], [8., 9.], [-24., -48.]),
+            (true, 1.6, [-37., -51.], [1., 15.], [-24., -24.]),
+            (true, 0.2, [40., 80.], [37., 19.], [120., 120.]),
         ] {
             let mut d = Document::demo();
             d.nodes
@@ -148,6 +160,7 @@ mod tests {
                 })
                 .unwrap();
             let mut v = EditorView::default();
+            v.interaction.set_grid_snap(snap);
             v.viewport.zoom = zoom;
             v.viewport.origin = [-200., -180.];
             let point = |p: [f32; 2]| [(p[0] + 200.) * zoom, (p[1] + 180.) * zoom];
@@ -221,6 +234,7 @@ mod tests {
             })
             .unwrap();
         let mut v = EditorView::default();
+        v.interaction.set_grid_snap(true);
         v.viewport.zoom = 1.;
         v.viewport.origin = [0., 0.];
         v.pointer(
@@ -310,8 +324,8 @@ mod tests {
         assert_eq!(ops.len(), 2);
         let moved = design_core::apply(&d, &ops).unwrap();
         for id in ["a", "b"] {
-            assert_eq!(moved.node(id).unwrap().x, d.node(id).unwrap().x + 32.);
-            assert_eq!(moved.node(id).unwrap().y, d.node(id).unwrap().y + 40.);
+            assert_eq!(moved.node(id).unwrap().x, d.node(id).unwrap().x + 40.);
+            assert_eq!(moved.node(id).unwrap().y, d.node(id).unwrap().y + 30.);
         }
         assert_eq!(moved.node("add").unwrap(), d.node("add").unwrap());
         click(&mut v, [70., 420.], true);
@@ -384,7 +398,7 @@ mod tests {
             .unwrap();
         assert_eq!(ops.len(), 1);
         let changed = design_core::apply(&d, &ops).unwrap();
-        assert_eq!(changed.node("add").unwrap().x, 432.);
+        assert_eq!(changed.node("add").unwrap().x, 440.);
         v.pointer(&d, 0, down).unwrap();
         assert!(v
             .pointer(
