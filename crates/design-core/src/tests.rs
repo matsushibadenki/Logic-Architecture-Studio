@@ -26,6 +26,7 @@ fn atomic_patch_and_conflict() {
 fn cycles_and_multiple_drivers_rejected() {
     let mut doc = Document::demo();
     doc.edges.push(Edge {
+        source_port: "y".into(),
         id: "bad".into(),
         from: "add".into(),
         to: "add".into(),
@@ -121,7 +122,7 @@ fn mcp_schema_rejects_malformed_nested_patch() {
     bad["operations"][0]["edge"]["from"] = json!(12);
     assert!(protocol::validate(&schema, &bad).is_err());
     let mut bad = good;
-    bad["operations"][0]["edge"]["port"] = json!("unknown");
+    bad["operations"][0]["edge"]["port"] = json!("");
     assert!(protocol::validate(&schema, &bad).is_err());
 }
 
@@ -353,10 +354,13 @@ fn appearance_preferences_are_atomic_and_independent_of_design_history() {
     let history = w.history.clone();
     w.dispatch_view(
         "view.preferences",
-        json!({"locale":"zh","node_colors":{"add":"#FF1234"}}),
+        json!({"locale":"zh","gate_symbols":true,"hide_gate_frames":true,"theme":"light","node_colors":{"add":"#FF1234"}}),
         "test",
     )
     .unwrap();
+    assert!(w.gate_symbols);
+    assert!(w.hide_gate_frames);
+    assert_eq!(w.theme, AppearanceTheme::Light);
     assert_eq!(w.node_colors["add"], "#ff1234");
     assert_eq!(w.node_colors["input"], default_node_colors()["input"]);
     let before = serde_json::to_value(&w).unwrap();
@@ -366,14 +370,40 @@ fn appearance_preferences_are_atomic_and_independent_of_design_history() {
         json!({"locale":"ja","reset_colors":true,"node_colors":{"add":"#é1234"}}),
         json!({"locale":"invalid","node_colors":{"add":"#123456"}}),
         json!({"locale":"ja","node_colors":{"add":42}}),
+        json!({"locale":"ja","gate_symbols":"gates"}),
+        json!({"locale":"ja","hide_gate_frames":null}),
+        json!({"locale":"ja","theme":"system"}),
+        json!({"locale":"ja","theme":null}),
     ] {
         assert!(w.dispatch_view("view.preferences", args, "test").is_err());
         assert_eq!(serde_json::to_value(&w).unwrap(), before);
     }
     let restored: Workspace = serde_json::from_value(before.clone()).unwrap();
+    assert!(restored.gate_symbols);
+    assert!(restored.hide_gate_frames);
+    assert_eq!(restored.theme, AppearanceTheme::Light);
     assert_eq!(restored.node_colors, w.node_colors);
     let mut legacy = before;
     legacy.as_object_mut().unwrap().remove("node_colors");
+    legacy.as_object_mut().unwrap().remove("gate_symbols");
+    legacy.as_object_mut().unwrap().remove("hide_gate_frames");
+    assert!(
+        !serde_json::from_value::<Workspace>(legacy.clone())
+            .unwrap()
+            .hide_gate_frames
+    );
+    legacy.as_object_mut().unwrap().remove("theme");
+    assert_eq!(
+        serde_json::from_value::<Workspace>(legacy.clone())
+            .unwrap()
+            .theme,
+        AppearanceTheme::Dark
+    );
+    assert!(
+        !serde_json::from_value::<Workspace>(legacy.clone())
+            .unwrap()
+            .gate_symbols
+    );
     assert_eq!(
         serde_json::from_value::<Workspace>(legacy)
             .unwrap()
@@ -397,4 +427,46 @@ fn appearance_preferences_are_atomic_and_independent_of_design_history() {
         serde_json::to_value(&w.history).unwrap(),
         serde_json::to_value(history).unwrap()
     );
+}
+
+#[test]
+fn gate_truth_tables_and_bitwise_widths() {
+    let fixture: Value =
+        serde_json::from_str(include_str!("../../../examples/logic-gates.json")).unwrap();
+    for width in [1, 8, 64] {
+        for signed in [false, true] {
+            let mut doc: Document = serde_json::from_value(fixture["document"].clone()).unwrap();
+            for n in &mut doc.nodes {
+                n.width = width;
+                n.signed = signed;
+            }
+            let mask = model::mask(width);
+            for a in [0, 1, 0x55 & mask, mask] {
+                for b in [0, 1, 0xaa & mask, mask] {
+                    let result = doc
+                        .evaluate(&BTreeMap::from([("a".into(), a), ("b".into(), b)]))
+                        .unwrap();
+                    for (kind, value) in [
+                        ("and", a & b),
+                        ("or", a | b),
+                        ("xor", a ^ b),
+                        ("not", !a),
+                        ("nand", !(a & b)),
+                        ("nor", !(a | b)),
+                        ("xnor", !(a ^ b)),
+                    ] {
+                        assert_eq!(
+                            result[&format!("out_{kind}")],
+                            value & mask,
+                            "{kind}/{width}/{signed}/{a}/{b}"
+                        );
+                    }
+                }
+            }
+            let rtl = doc.rtl().unwrap();
+            assert!(rtl.contains("~(n_a & n_b)"));
+            assert!(rtl.contains("~(n_a | n_b)"));
+            assert!(rtl.contains("~(n_a ^ n_b)"));
+        }
+    }
 }

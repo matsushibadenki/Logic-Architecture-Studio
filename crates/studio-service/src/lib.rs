@@ -2,6 +2,7 @@ mod delta;
 pub mod native_sync;
 mod persistence;
 pub mod recovery;
+mod routes;
 mod rtl_stimuli;
 mod rtl_verification;
 mod simulation;
@@ -98,6 +99,9 @@ impl Service {
         })
     }
     pub fn execute(&self, mut req: Request) -> Result<Value, String> {
+        if req.method == "view.routes" {
+            return routes::execute(self, req.args);
+        }
         let compact = req.method == "view.command";
         if compact {
             let method = req.args["method"]
@@ -105,6 +109,9 @@ impl Service {
                 .ok_or("Missing view command")?
                 .to_string();
             if ![
+                "module.group",
+                "module.instantiate",
+                "module.explode",
                 "design.apply_patch",
                 "design.set_signed",
                 "design.undo",
@@ -164,7 +171,7 @@ impl Service {
             if session.version() != session_version {
                 return Err("Simulation changed during RTL execution; rerun".into());
             }
-            session.install_external(&state, run);
+            session.install_external(&state, run)?;
             return session.execute(&state, "simulation.state", &json!({}));
         }
         if matches!(req.method.as_str(), "verify.rtl" | "verify.formal") {
@@ -230,7 +237,7 @@ impl Service {
             }
             let snapshot = if req.args["scope"] == "native" || req.args["scope"] == "native_delta" {
                 let mut snapshot = json!({"revision":state.revision,"selected":state.selected,"selection":state.selected_nodes(),
-                    "locale":state.locale,"node_colors":state.node_colors,"panels":state.panels});
+                    "locale":state.locale,"gate_symbols":state.gate_symbols,"hide_gate_frames":state.hide_gate_frames,"theme":state.theme,"node_colors":state.node_colors,"panels":state.panels});
                 // A service restart invalidates the document cache even when
                 // the persisted revision happens to match the client's value.
                 let same_session = req.args["cursor"]
@@ -678,7 +685,7 @@ mod tests {
         let web = service
             .execute(request("project.sync", json!({"scope":"web"})))
             .unwrap();
-        service.execute(request("view.command", json!({"method":"view.preferences","args":{"locale":"ja","node_colors":{"add":"#123456"}}}))).unwrap();
+        service.execute(request("view.command", json!({"method":"view.preferences","args":{"locale":"ja","theme":"light","hide_gate_frames":true,"node_colors":{"add":"#123456"}}}))).unwrap();
         let delta = service
             .execute(request(
                 "project.sync",
@@ -686,6 +693,7 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(delta["deltas"][0]["set"]["node_colors"]["add"], "#123456");
+        assert_eq!(delta["deltas"][0]["set"]["theme"], "light");
         assert!(delta["deltas"][0].get("document").is_none());
         drop(service);
         let reopened = Service::open(&root).unwrap();
@@ -693,6 +701,8 @@ mod tests {
             .execute(request("project.inspect", json!({})))
             .unwrap();
         assert_eq!(state["node_colors"]["add"], "#123456");
+        assert_eq!(state["theme"], "light");
+        assert_eq!(state["hide_gate_frames"], true);
         assert_eq!(state["locale"], "ja");
         assert_eq!(state["revision"], 0);
         drop(reopened);
@@ -900,5 +910,41 @@ mod tests {
             .unwrap();
         assert_eq!(unchanged["changed"], false);
         let _ = fs::remove_dir_all(root);
+    }
+    #[test]
+    fn modules_persist_and_replay_in_native_delta() {
+        let root = std::env::temp_dir().join(format!("las-module-sync-{}", std::process::id()));
+        let service = Service::open(&root).unwrap();
+        let request = |method: &str, args| Request {
+            method: method.into(),
+            args,
+            actor: "gui".into(),
+        };
+        let initial = service
+            .execute(request("project.sync", json!({"scope":"native"})))
+            .unwrap();
+        let before = native_sync::apply(None, &initial).unwrap();
+        service.execute(request("view.command",json!({"method":"module.group","args":{"expected_revision":0,"name":"Arithmetic","ids":["add","bit_and"]}}))).unwrap();
+        let changed = service
+            .execute(request(
+                "project.sync",
+                json!({"scope":"native","cursor":initial["cursor"]}),
+            ))
+            .unwrap();
+        let after = native_sync::apply(Some(&before), &changed).unwrap();
+        assert_eq!(after.document, service.state.lock().unwrap().document);
+        assert!(after.document.modules.contains_key("Arithmetic"));
+        let trace = service
+            .execute(request(
+                "simulation.evaluate",
+                json!({"inputs":{"a":"3","b":"4","op":"0"}}),
+            ))
+            .unwrap();
+        assert_eq!(trace["outputs"]["result"], "7");
+        drop(service);
+        let reopened = Service::open(&root).unwrap();
+        assert_eq!(reopened.state.lock().unwrap().document, after.document);
+        drop(reopened);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

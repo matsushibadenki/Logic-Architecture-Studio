@@ -2,13 +2,20 @@
 // See THIRD_PARTY_NOTICES.md and vendor/unge/LICENSE-MIT.
 import {
   inputPortNames,
+  outputs,
   ports,
   type Node,
   type Kind,
   type Locale,
 } from "./types";
 export const NODE_WIDTH = 288;
-export function nodeHeight(kind: Kind) {
+export function nodeHeight(value: Kind | Node) {
+  if (typeof value !== "string")
+    return Math.max(
+      NODE_WIDTH,
+      (Math.max(ports(value).length, outputs(value).length, 1) + 1) * 64,
+    );
+  const kind = value;
   // Match the Rust layout: minimum square, 64 units per port row.
   return Math.max(
     NODE_WIDTH,
@@ -17,8 +24,8 @@ export function nodeHeight(kind: Kind) {
 }
 export function portY(node: Node, index: number, output = false) {
   return (
-    (nodeHeight(node.kind) * (index + 1)) /
-    ((output ? 1 : ports(node).length) + 1)
+    (nodeHeight(node) * (index + 1)) /
+    ((output ? outputs(node).length : ports(node).length) + 1)
   );
 }
 export function tone(kind: Kind) {
@@ -34,6 +41,7 @@ export function tone(kind: Kind) {
 }
 export function caption(node: Node, locale: Locale) {
   const expressions: Record<Kind, string> = {
+    module: node.config?.type === "module" ? node.config.definition : "Module",
     input: locale === "ja" ? "入力" : locale === "zh" ? "输入" : "Input",
     output: locale === "ja" ? "出力" : locale === "zh" ? "输出" : "Output",
     constant: `y = ${node.config?.type === "constant" ? node.config.value : "0"}`,
@@ -53,6 +61,9 @@ export function caption(node: Node, locale: Locale) {
     add: "y = a + b",
     sub: "y = a − b",
     and: "y = a & b",
+    nand: "y = ~(a & b)",
+    nor: "y = ~(a | b)",
+    xnor: "y = ~(a ^ b)",
     or: "y = a | b",
     xor: "y = a ^ b",
     not: "y = ~a",
@@ -71,9 +82,12 @@ export function cablePath(a: Node, b: Node, index: number) {
     const mid = (sx + tx) / 2;
     return `M ${sx} ${sy} H ${mid} V ${ty} H ${tx}`;
   }
-  const bottom =
-    Math.max(a.y + nodeHeight(a.kind), b.y + nodeHeight(b.kind)) + 24;
-  return `M ${sx} ${sy} H ${sx + 18} V ${bottom} H ${tx - 18} V ${ty} H ${tx}`;
+  const bottom = Math.max(a.y + nodeHeight(a), b.y + nodeHeight(b)) + 24;
+  // Match native routing: upper inputs use outer return lanes so separate
+  // signals do not share the bottom run or the vertical approach to a node.
+  const laneOffset = Math.max(0, ports(b).length - index - 1) * 24;
+  const clearance = 18 + laneOffset;
+  return `M ${sx} ${sy} H ${sx + clearance} V ${bottom + laneOffset} H ${tx - clearance} V ${ty} H ${tx}`;
 }
 
 // Match unge_core::grid_spacing and snap_to_grid (including negative ties).
@@ -82,4 +96,9 @@ export function gridSpacing(zoom: number) {
 }
 export function snapToGrid(value: number, spacing: number) {
   return Math.round(value / spacing) * spacing;
+}
+
+// Match unge-render::wire_width for nets, internal leads, symbols and previews.
+export function wireWidth(zoom: number) {
+  return Math.max(3, 1.5 / Math.max(zoom, 0.02));
 }

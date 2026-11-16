@@ -78,6 +78,9 @@ impl Testbench {
         &self,
         doc: &Document,
     ) -> Result<(Vec<CycleInput>, Vec<CycleSample>, CheckReport), String> {
+        if doc.has_modules() {
+            return self.run(&doc.flatten()?);
+        }
         Self::validate_rows(doc, &self.rows)?;
         doc.validate(true)?;
         if self.rows.len().saturating_mul(doc.nodes.len()) > 524_288 {

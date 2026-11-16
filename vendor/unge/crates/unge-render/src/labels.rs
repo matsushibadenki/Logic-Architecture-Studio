@@ -21,6 +21,8 @@ impl LabelText {
 pub struct NodeLabels {
     /// Accent shared by the header, ports and outgoing cables.
     pub tone: crate::NodeTone,
+    pub gate: Option<crate::GateSymbol>,
+    pub hide_frame: bool,
     /// Optional per-node-kind sRGB accent supplied by the host.
     pub color: Option<[u8; 3]>,
     /// Optional short symbol (two characters maximum) and one-line footer.

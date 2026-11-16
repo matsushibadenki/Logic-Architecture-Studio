@@ -12,6 +12,25 @@
 - 🟢 [Done] Rust-owned per-workspace persistence and WebView/native metadata delta sync; custom colors reach nodes, ports, source wires, overview symbols, library and inspector without circuit/history changes.
 - 🟢 [Done] macOS release QA: separate window open/close/reopen, all three languages, hex edit/apply, invalid-color blocking, discard/reset, scrollable settings with fixed footer, native canvas color changes and restoration after app restart. Automated persistence, atomicity, delta-sharing and retained-cache tests pass.
 
+## Dark / light appearance
+
+- 🟢 [Done] Appearance → Color mode offers Dark/Light in English, Japanese and Simplified Chinese. Apply/Discard uses the shared Rust preference; old workspaces default to Dark without changing design revision/history.
+- 🟢 [Done] Metadata-only sync updates WebView panels, detached windows, native window chrome and wgpu canvas. Default role colors adapt to the background; custom color values are preserved. Results, waveforms and annotations use theme tokens.
+- 🟢 [Done] macOS release QA (2026-11-16): Dark → Light → Dark, Preferences and native canvas appearance, floating/redocking Results, Light restoration after restart. Preference validation, legacy loading, persistence, native/WebView delta tests and workspace checks pass.
+- ⭕️ [Pending] Windows/Linux native window chrome and rendering QA require those environments.
+
+## Gate symbol display
+
+- 🟢 [Done] Appearance can hide gate frames in either theme. Shared Rust preference persists and syncs without circuit/history changes; unfilled gates retain port anchors, labels, internal leads and corner-only selection marks. Normal/overview macOS QA and renderer cache/restoration tests pass.
+- 🟢 [Done] Light-mode smallest LOD retains input/output leads, scaled to the overview gate and inversion bubble, with at least 1.5 screen pixels of stroke width. Seven gate types tested across 0.02–0.349 zoom; native minimum-LOD wiring visually verified.
+
+- 🟢 [Done] Light-mode gate overview removes both tile fill and white knockouts, including selected nodes. Native wgpu and WebView fallback use colored outlines; macOS zoom QA and renderer regression tests pass.
+
+- 🟢 [Done] Toolbar toggle and Appearance → Node display select between blocks and distinctive AND/OR/XOR/NOT/NAND/NOR/XNOR gate shapes. Rust-owned preference persists per workspace and propagates through metadata-only sync.
+- 🟢 [Done] Native wgpu outlines, inversion bubbles and XOR curves retain existing node bounds and port anchors. Smallest LOD uses white gate outlines on role-colored tiles in Dark mode; Light mode uses unfilled role-colored outlines with the canvas visible through them. The WebView fallback supports the same modes.
+- 🟢 [Done] NAND/NOR/XNOR typed nodes, palette entries, custom colors, bitwise simulation and Verilog output. Independent truth tables cover signed/unsigned 1/8/64-bit values; Icarus and Verilator each pass 112 expected output checks with Rust comparison.
+- 🟢 [Done] macOS release QA (2026-11-16): mode toggle, seven distinct gate shapes, selection, smallest LOD, Appearance setting and preference restoration after restart. XNOR/NAND block labels fit their badges at detailed/intermediate/overview zoom levels.
+
 ## Core / Phase 1
 
 - 🟢 [Done] Rust-owned typed combinational IR, atomic patch validation and revision conflicts.
@@ -43,7 +62,8 @@
 - 🟢 [Done] Vendored UNGE rendering subset with license notices and no external path dependency.
 - 🟢 [Done] Role-colored headers, symbols, port rings, Bezier cables, selected halo, connection preview and basic zoom detail reduction.
 - 🟢 [Done] Overview readability: minimum screen-space title/formula sizes, high-contrast formulas and bit widths in node titles; macOS zoom-out/zoom-in QA.
-- 🟢 [Done] Zoom-stable wires: minimum 1 framebuffer pixel, thicker 1-bit/bus strokes (2.5/4.5 world units), centered GPU antialiasing, screen-sized overview port dots and zoom-aware viewport padding. Browser fallback mirrors the width/port rules.
+- 🟢 [Done] Zoom-stable, uniform wires: external nets, internal leads, gate outlines and connection previews share a 3-world-unit stroke with a 1.5-framebuffer-pixel minimum. Single-bit and bus wires use the same thickness; bus-width labels remain available. Browser fallback mirrors the stroke/port rules. Regression coverage checks both themes, multiple bus widths and zoom levels; native light-mode rendering was visually verified at all three detail levels.
+- 🟢 [Done] Separate feedback lanes per destination input: upper ports use outer bottom/left approaches to separate return wires. Native drag previews, committed geometry and browser fallback use the same port-order rule without scanning the graph. Regression tests cover multi-input separation, movement and retained/full rebuild equivalence; the reported AND/XOR→NAND overlap was visually verified as resolved in the native app.
 - 🟢 [Done] macOS release zoom-in/out across all three LODs; GPU pixel checks at 2–100% zoom, including 0.3/0.35/0.6 boundaries and four subpixel offsets for 1-bit/bus wires (72 render cases); retained geometry and GPU regressions pass.
 - 🟢 [Done] Rust UNGE scene adapter, GPU labels, native Surface rendering path; no frame IPC.
 - 🟢 [Done] Real Metal GPU offscreen rendering tests for English, Japanese and Simplified Chinese; glyph and pixel checks passed.
@@ -74,7 +94,10 @@
 - 🟢 [Done] macOS live QA for library, inspector and results: all dock destinations, floating/redocking, panel close/reopen, floating OS-close/reopen.
 - ⭕️ [Pending] Physical multi-monitor/DPI changes and minimize/restore QA.
 - ⭕️ [Pending] Windows named-pipe transport and Windows/Linux native packaging/interaction QA.
-- 🔴 [Later] General obstacle-aware routing, group navigation, minimap and large netlists.
+- 🟢 [Done] Rust orthogonal obstacle-aware routing with 12-unit clearance, reserved port approaches, separate net corridors and bridge arcs for unavoidable crossings. All moved nodes (including unrelated obstacles) participate in preview/commit rerouting; unchanged wire geometry remains cached. Native and WebView use the same router, with revision-guarded/coalesced web preview requests. Covered ports/search exhaustion show `!` instead of drawing through nodes.
+- 🟢 [Done] Native and Web live verification of obstacle movement through the design API and Undo restoration; no browser console errors. Regression coverage includes non-incident obstacle moves, preview/commit/full-rebuild equivalence, multi-net returns and nonplanar crossings. Release smoke benchmark: 2,000 nodes / 1,950 wires in 10.5 ms (simple grid; routing CPU only).
+- ⭕️ [Pending] Live drag automation did not deliver movement in this environment; drag preview/commit is covered by Rust tests, while actual screen rerouting was verified through revision-checked edits and Undo.
+- 🔴 [Later] Incremental route search for dense netlists, larger search budgets, group navigation and minimap.
 
 ## Verification / Phase 2
 
@@ -98,7 +121,11 @@
 - 🟢 [Done] Durable per-cycle stimulus tables (1–256 rows), reset, UTF-8 CSV import/export and exact typed expected-output checks; revision/version guards, shared failure-to-cursor selection and existing canvas/waveform/VCD integration. Rust owns saved tables; edits do not change circuit revisions or Undo history.
 - 🟢 [Done] Run saved stimulus tables with Icarus Verilog or Verilator: signed inputs/expectations, registers, synchronous reset, all-node Rust comparison, separate expectation checks, shared RTL trace/annotations and original simulator VCD export. Real engine tests and macOS execution/save QA pass.
 - 🟠 [Next] Expression assertions and richer failure navigation for saved stimulus tables.
-- 🔴 [Later] Full X/Z semantics with external simulator alignment; HDL import, hierarchical/parameterized modules, FST, signal grouping and schematic mode switching.
+- 🟢 [Done] Reusable module definitions and instances: group selected processing nodes, infer typed boundary ports, preserve top-level IO, place independent copies, nest existing modules, and expand one level back into editable nodes. Rust owns definitions, validation, persistent history and native/WebView deltas; both canvases support named multi-output ports.
+- 🟢 [Done] Library create/place controls, modifier selection in the hierarchy list and recursive inspector tree in English/Japanese/Simplified Chinese. macOS/WebView live QA: create → reuse → three-level nesting → expand → Undo → restart restoration; two distinct module outputs connected to a primitive gate and reflected in the native renderer.
+- 🟢 [Done] Flattened execution/Verilog with stable independent instance signals; combinational equivalence, signed sequential/reset expectations, independent register state, self-feedback expansion, malformed/recursive definition rejection, persistence and delta replay tests. Nested saved stimuli pass real Icarus and Verilator comparison with Rust and VCD generation. See docs/MODULES.md.
+- 🔴 [Later] In-place shared module-definition editing/drilldown, parameter overrides, hierarchy-preserving HDL output and per-port module back-annotation.
+- 🔴 [Later] Full X/Z semantics with external simulator alignment; HDL import, FST and signal grouping.
 - ⭕️ [Pending] External GTKWave/Surfer opening and platform-specific CSV/VCD save QA beyond macOS; viewers are not installed in this environment.
 - 🟢 [Done] Native schematic symbols, zoom-dependent port ranges, missing-input indicators, orthogonal feedback routes and revision-checked register values on the canvas.
 - 🔴 [Later] PDK-specific mapping, STA, cell area/power and physical evaluation.

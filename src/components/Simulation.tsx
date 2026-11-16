@@ -1,3 +1,4 @@
+import { isSequential } from "../types";
 import { StimulusTable } from "./StimulusTable";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -35,7 +36,7 @@ export function Simulation({
   const [inputMode, setInputMode] = useState<"manual" | "stimuli">("stimuli");
   const [values, setValues] = useState<Record<string, string>>({});
   const [mode, setMode] = useState<"table" | "wave">("table");
-  const sequential = snapshot.document.nodes.some((n) => n.kind === "register");
+  const sequential = isSequential(snapshot.document);
   const inputs = () =>
     Object.fromEntries(
       snapshot.document.nodes

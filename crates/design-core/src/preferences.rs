@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 pub fn default_node_colors() -> BTreeMap<String, String> {
     [
+        ("module", "#b69df9"),
         ("zero_extend", "#b69df9"),
         ("sign_extend", "#f1bd68"),
         ("constant", "#5fd5b8"),
@@ -11,6 +12,9 @@ pub fn default_node_colors() -> BTreeMap<String, String> {
         ("add", "#78a2ff"),
         ("sub", "#78a2ff"),
         ("and", "#b69df9"),
+        ("nand", "#b69df9"),
+        ("nor", "#b69df9"),
+        ("xnor", "#b69df9"),
         ("or", "#b69df9"),
         ("xor", "#b69df9"),
         ("not", "#b69df9"),
@@ -33,4 +37,12 @@ pub fn parse_node_color(value: &str) -> Option<[u8; 3]> {
         u8::from_str_radix(&value[3..5], 16).ok()?,
         u8::from_str_radix(&value[5..7], 16).ok()?,
     ])
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppearanceTheme {
+    #[default]
+    Dark,
+    Light,
 }

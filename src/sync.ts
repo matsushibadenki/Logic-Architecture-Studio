@@ -8,6 +8,7 @@ export interface Delta {
   set: Partial<Omit<Snapshot, "document" | "history" | "experiments">>;
   document?: {
     name?: string;
+    modules?: Document["modules"];
     nodes?: CollectionDelta<Node>;
     edges?: CollectionDelta<Edge>;
   };
@@ -60,6 +61,9 @@ const setKeys = new Set([
   "selection",
   "locale",
   "node_colors",
+  "gate_symbols",
+  "hide_gate_frames",
+  "theme",
   "testbench",
   "panels",
   "diagnostics",
@@ -88,6 +92,7 @@ export function applySync(
     if (delta.document) {
       const change = delta.document;
       const document: Document = { ...next.document };
+      if (change.modules !== undefined) document.modules = change.modules;
       if (change.name !== undefined) document.name = change.name;
       if (change.nodes)
         document.nodes = collection(document.nodes, change.nodes, (n) => n.id);

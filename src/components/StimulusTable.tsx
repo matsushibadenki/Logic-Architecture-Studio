@@ -1,3 +1,4 @@
+import { isSequential } from "../types";
 import { useRef, useState } from "react";
 import {
   Plus,
@@ -43,7 +44,7 @@ export function StimulusTable({
   const rows = draft?.rows ?? saved.rows;
   const inputs = snapshot.document.nodes.filter((n) => n.kind === "input");
   const outputs = snapshot.document.nodes.filter((n) => n.kind === "output");
-  const sequential = snapshot.document.nodes.some((n) => n.kind === "register");
+  const sequential = isSequential(snapshot.document);
   const conflict =
     !!draft &&
     (draft.version !== saved.version || draft.revision !== snapshot.revision);

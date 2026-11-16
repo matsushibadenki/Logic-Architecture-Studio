@@ -26,7 +26,16 @@ impl Session {
     pub(crate) fn version(&self) -> u64 {
         self.version
     }
-    pub(crate) fn install_external(&mut self, workspace: &Workspace, run: crate::rtl_stimuli::Run) {
+    pub(crate) fn install_external(
+        &mut self,
+        workspace: &Workspace,
+        run: crate::rtl_stimuli::Run,
+    ) -> Result<(), String> {
+        let document = if workspace.document.has_modules() {
+            Arc::new(workspace.document.flatten()?)
+        } else {
+            workspace.document.clone()
+        };
         self.generation += 1;
         self.version += 1;
         let id = format!(
@@ -42,7 +51,7 @@ impl Session {
         self.trace = Some(Trace {
             id,
             revision: workspace.revision,
-            document: workspace.document.clone(),
+            document,
             selected: run.samples.len() - 1,
             samples: run.samples,
             cycles: run.cycles,
@@ -52,6 +61,7 @@ impl Session {
             external: Some(run.comparison),
             external_vcd: Some(run.vcd),
         });
+        Ok(())
     }
 
     pub fn execute(
@@ -60,6 +70,21 @@ impl Session {
         method: &str,
         args: &Value,
     ) -> Result<Value, String> {
+        let elaborated;
+        let workspace = if workspace.document.has_modules()
+            && matches!(
+                method,
+                "simulation.cycles" | "simulation.evaluate" | "simulation.testbench"
+            ) {
+            elaborated = {
+                let mut w = workspace.clone();
+                w.document = Arc::new(w.document.flatten()?);
+                w
+            };
+            &elaborated
+        } else {
+            workspace
+        };
         match method {
             "simulation.cycles" | "simulation.evaluate" | "simulation.testbench" => {
                 if method != "simulation.evaluate"
@@ -284,6 +309,7 @@ mod tests {
         .into_iter()
         .enumerate()
         .map(|(i, (from, to, port))| design_core::Edge {
+            source_port: "y".into(),
             id: format!("e{i}"),
             from: from.into(),
             to: to.into(),
@@ -292,6 +318,7 @@ mod tests {
         .collect::<Vec<_>>();
         let mut workspace = Workspace::default();
         workspace.document = Arc::new(Document {
+            modules: Default::default(),
             name: "accumulator".into(),
             nodes: nodes.into(),
             edges: edges.into(),

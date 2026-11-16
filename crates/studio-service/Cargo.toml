@@ -3,6 +3,7 @@ name = "studio-service"
 version.workspace = true
 edition.workspace = true
 [dependencies]
+studio-routing = { path = "../routing" }
 design-core = { path = "../design-core" }
 serde.workspace = true
 serde_json.workspace = true

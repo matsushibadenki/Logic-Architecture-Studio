@@ -1,6 +1,6 @@
 [workspace]
 exclude = ["vendor/unge"]
-members = ["crates/design-core", "crates/studio-service", "crates/renderer", "src-tauri"]
+members = ["crates/design-core", "crates/studio-service", "crates/renderer", "crates/routing", "src-tauri"]
 default-members = ["crates/design-core", "crates/studio-service"]
 resolver = "2"
 [workspace.package]

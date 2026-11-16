@@ -1,0 +1,258 @@
+{
+  "schema": 1,
+  "document": {
+    "name": "LogicGates",
+    "nodes": [
+      {
+        "id": "a",
+        "name": "a",
+        "kind": "input",
+        "width": 8,
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "b",
+        "name": "b",
+        "kind": "input",
+        "width": 8,
+        "x": 0,
+        "y": 400
+      },
+      {
+        "id": "g_and",
+        "name": "g_and",
+        "kind": "and",
+        "width": 8,
+        "x": 400,
+        "y": 0
+      },
+      {
+        "id": "out_and",
+        "name": "out_and",
+        "kind": "output",
+        "width": 8,
+        "x": 800,
+        "y": 0
+      },
+      {
+        "id": "g_or",
+        "name": "g_or",
+        "kind": "or",
+        "width": 8,
+        "x": 400,
+        "y": 340
+      },
+      {
+        "id": "out_or",
+        "name": "out_or",
+        "kind": "output",
+        "width": 8,
+        "x": 800,
+        "y": 340
+      },
+      {
+        "id": "g_xor",
+        "name": "g_xor",
+        "kind": "xor",
+        "width": 8,
+        "x": 400,
+        "y": 680
+      },
+      {
+        "id": "out_xor",
+        "name": "out_xor",
+        "kind": "output",
+        "width": 8,
+        "x": 800,
+        "y": 680
+      },
+      {
+        "id": "g_not",
+        "name": "g_not",
+        "kind": "not",
+        "width": 8,
+        "x": 400,
+        "y": 1020
+      },
+      {
+        "id": "out_not",
+        "name": "out_not",
+        "kind": "output",
+        "width": 8,
+        "x": 800,
+        "y": 1020
+      },
+      {
+        "id": "g_nand",
+        "name": "g_nand",
+        "kind": "nand",
+        "width": 8,
+        "x": 400,
+        "y": 1360
+      },
+      {
+        "id": "out_nand",
+        "name": "out_nand",
+        "kind": "output",
+        "width": 8,
+        "x": 800,
+        "y": 1360
+      },
+      {
+        "id": "g_nor",
+        "name": "g_nor",
+        "kind": "nor",
+        "width": 8,
+        "x": 400,
+        "y": 1700
+      },
+      {
+        "id": "out_nor",
+        "name": "out_nor",
+        "kind": "output",
+        "width": 8,
+        "x": 800,
+        "y": 1700
+      },
+      {
+        "id": "g_xnor",
+        "name": "g_xnor",
+        "kind": "xnor",
+        "width": 8,
+        "x": 400,
+        "y": 2040
+      },
+      {
+        "id": "out_xnor",
+        "name": "out_xnor",
+        "kind": "output",
+        "width": 8,
+        "x": 800,
+        "y": 2040
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_and_a",
+        "to": "g_and",
+        "port": "a",
+        "from": "a"
+      },
+      {
+        "id": "e_and_b",
+        "to": "g_and",
+        "port": "b",
+        "from": "b"
+      },
+      {
+        "id": "e_and",
+        "to": "out_and",
+        "port": "a",
+        "from": "g_and"
+      },
+      {
+        "id": "e_or_a",
+        "to": "g_or",
+        "port": "a",
+        "from": "a"
+      },
+      {
+        "id": "e_or_b",
+        "to": "g_or",
+        "port": "b",
+        "from": "b"
+      },
+      {
+        "id": "e_or",
+        "to": "out_or",
+        "port": "a",
+        "from": "g_or"
+      },
+      {
+        "id": "e_xor_a",
+        "to": "g_xor",
+        "port": "a",
+        "from": "a"
+      },
+      {
+        "id": "e_xor_b",
+        "to": "g_xor",
+        "port": "b",
+        "from": "b"
+      },
+      {
+        "id": "e_xor",
+        "to": "out_xor",
+        "port": "a",
+        "from": "g_xor"
+      },
+      {
+        "id": "e_not_a",
+        "to": "g_not",
+        "port": "a",
+        "from": "a"
+      },
+      {
+        "id": "e_not",
+        "to": "out_not",
+        "port": "a",
+        "from": "g_not"
+      },
+      {
+        "id": "e_nand_a",
+        "to": "g_nand",
+        "port": "a",
+        "from": "a"
+      },
+      {
+        "id": "e_nand_b",
+        "to": "g_nand",
+        "port": "b",
+        "from": "b"
+      },
+      {
+        "id": "e_nand",
+        "to": "out_nand",
+        "port": "a",
+        "from": "g_nand"
+      },
+      {
+        "id": "e_nor_a",
+        "to": "g_nor",
+        "port": "a",
+        "from": "a"
+      },
+      {
+        "id": "e_nor_b",
+        "to": "g_nor",
+        "port": "b",
+        "from": "b"
+      },
+      {
+        "id": "e_nor",
+        "to": "out_nor",
+        "port": "a",
+        "from": "g_nor"
+      },
+      {
+        "id": "e_xnor_a",
+        "to": "g_xnor",
+        "port": "a",
+        "from": "a"
+      },
+      {
+        "id": "e_xnor_b",
+        "to": "g_xnor",
+        "port": "b",
+        "from": "b"
+      },
+      {
+        "id": "e_xnor",
+        "to": "out_xnor",
+        "port": "a",
+        "from": "g_xnor"
+      }
+    ]
+  }
+}

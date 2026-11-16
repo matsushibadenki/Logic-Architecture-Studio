@@ -23,6 +23,9 @@ pub fn filter(delta: &Value) -> Value {
         "selection",
         "locale",
         "node_colors",
+        "gate_symbols",
+        "hide_gate_frames",
+        "theme",
         "panels",
     ] {
         if let Some(v) = delta["set"].get(key) {
@@ -140,6 +143,9 @@ pub fn apply(previous: Option<&Snapshot>, response: &Value) -> Result<Snapshot, 
                 "selection",
                 "locale",
                 "node_colors",
+                "gate_symbols",
+                "hide_gate_frames",
+                "theme",
                 "panels",
             ]
             .contains(&key.as_str())
@@ -150,6 +156,9 @@ pub fn apply(previous: Option<&Snapshot>, response: &Value) -> Result<Snapshot, 
         }
         if let Some(change) = delta.get("document") {
             let doc = document.get_or_insert_with(|| (*previous.document).clone());
+            if let Some(modules) = change.get("modules") {
+                doc.modules = serde_json::from_value(modules.clone()).map_err(|e| e.to_string())?;
+            }
             if let Some(name) = change.get("name") {
                 doc.name = name.as_str().ok_or("Invalid document name")?.into();
             }
@@ -181,7 +190,7 @@ mod tests {
         let mut new = old.clone();
         new.dispatch_view(
             "view.preferences",
-            json!({"locale":"en","node_colors":{"add":"#123456"}}),
+            json!({"locale":"en","gate_symbols":true,"hide_gate_frames":true,"theme":"light","node_colors":{"add":"#123456"}}),
             "test",
         )
         .unwrap();
@@ -194,6 +203,9 @@ mod tests {
         let response = json!({"kind":"delta","changed":true,"base":"s:0","cursor":"s:1","deltas":[filter(&crate::delta::between(&old,&new))]});
         let metadata = apply(Some(&first), &response).unwrap();
         assert!(Arc::ptr_eq(&first.document, &metadata.document));
+        assert_eq!(metadata.meta["gate_symbols"], true);
+        assert_eq!(metadata.meta["hide_gate_frames"], true);
+        assert_eq!(metadata.meta["theme"], "light");
         assert_eq!(metadata.meta["selection"], json!(["a", "b"]));
         assert_eq!(metadata.meta["node_colors"]["add"], "#123456");
         old = new.clone();

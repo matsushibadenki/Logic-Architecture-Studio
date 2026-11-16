@@ -101,6 +101,7 @@ impl EditorView {
             }),
             Command::Connect { edge } => out.push(design_core::Operation::Connect {
                 edge: design_core::Edge {
+                    source_port: edge.from.port.clone(),
                     id: format!("e_{}", edge.id.simple()),
                     from: lookup(edge.from.node)?,
                     to: lookup(edge.to.node)?,
@@ -451,6 +452,7 @@ mod tests {
     #[test]
     fn native_feedback_reconnect_stops_cycle_search_at_registers() {
         let doc = Document {
+            modules: Default::default(),
             name: "feedback".into(),
             nodes: vec![
                 design_core::Node {
@@ -477,12 +479,14 @@ mod tests {
             .into(),
             edges: vec![
                 design_core::Edge {
+                    source_port: "y".into(),
                     id: "feedback".into(),
                     from: "acc".into(),
                     to: "sum".into(),
                     port: "b".into(),
                 },
                 design_core::Edge {
+                    source_port: "y".into(),
                     id: "data".into(),
                     from: "sum".into(),
                     to: "acc".into(),

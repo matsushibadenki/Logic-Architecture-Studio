@@ -126,6 +126,12 @@ pub fn redraw(app: &tauri::AppHandle) {
         .is_none_or(|previous| previous.0 != snapshot.cursor)
     {
         n.renderer
+            .set_theme(serde_json::from_value(s["theme"].clone()).unwrap_or_default());
+        n.renderer
+            .set_hide_gate_frames(s["hide_gate_frames"].as_bool().unwrap_or(false));
+        n.renderer
+            .set_gate_symbols(s["gate_symbols"].as_bool().unwrap_or(false));
+        n.renderer
             .set_node_colors(serde_json::from_value(s["node_colors"].clone()).unwrap_or_default());
     }
     n.dirty = false;

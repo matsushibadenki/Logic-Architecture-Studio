@@ -28,6 +28,7 @@ fn text(en: &str, ja: &str, zh: &str) -> LabelText {
 }
 fn labels(kind: &Kind) -> (NodeTone, &'static str, LabelText) {
     match kind {
+        Kind::Module => (NodeTone::Violet, "M", text("Module", "モジュール", "模块")),
         Kind::ZeroExtend => (
             NodeTone::Violet,
             "ZX",
@@ -56,6 +57,21 @@ fn labels(kind: &Kind) -> (NodeTone, &'static str, LabelText) {
             NodeTone::Blue,
             "−",
             text("y = a − b", "y = a − b", "y = a − b"),
+        ),
+        Kind::Nand => (
+            NodeTone::Violet,
+            "NAND",
+            text("y = ~(a & b)", "y = ~(a & b)", "y = ~(a & b)"),
+        ),
+        Kind::Nor => (
+            NodeTone::Violet,
+            "NOR",
+            text("y = ~(a | b)", "y = ~(a | b)", "y = ~(a | b)"),
+        ),
+        Kind::Xnor => (
+            NodeTone::Violet,
+            "XNOR",
+            text("y = ~(a ^ b)", "y = ~(a ^ b)", "y = ~(a ^ b)"),
         ),
         Kind::And => (
             NodeTone::Violet,
@@ -102,7 +118,7 @@ fn node_rect(n: &design_core::Node) -> Rect {
         x: n.x,
         y: n.y,
         width: NODE_WIDTH,
-        height: node_height(&n.kind),
+        height: n.height(),
     }
 }
 fn render_node(n: &design_core::Node) -> unge_core::Node {
@@ -120,12 +136,12 @@ fn render_node(n: &design_core::Node) -> unge_core::Node {
             .into_iter()
             .map(|(p, w)| port(p, w, n.input_signed(p), true))
             .collect(),
-        outputs: if n.kind == Kind::Output {
-            vec![]
-        } else {
-            vec![port("y", n.width, Some(n.signed), false)]
-        },
-        properties: if n.kind == Kind::Register {
+        outputs: n
+            .outputs()
+            .into_iter()
+            .map(|(p, w, s)| port(p, w, Some(s), false))
+            .collect(),
+        properties: if matches!(n.kind, Kind::Register | Kind::Module) {
             [(unge_core::CLOCKED_NODE_PROPERTY.into(), true.into())].into()
         } else {
             Properties::new()
@@ -137,7 +153,7 @@ fn render_edge(e: &design_core::Edge) -> unge_core::Edge {
         id: stable_id("edge", &e.id),
         from: Endpoint {
             node: stable_id("node", &e.from),
-            port: "y".into(),
+            port: e.source_port.clone(),
         },
         to: Endpoint {
             node: stable_id("node", &e.to),
@@ -148,6 +164,7 @@ fn render_edge(e: &design_core::Edge) -> unge_core::Edge {
 fn node_labels(n: &design_core::Node) -> NodeLabels {
     let (tone, symbol, mut caption) = labels(&n.kind);
     let expression = match &n.config {
+        design_core::NodeConfig::Module { definition, .. } => Some(definition.clone()),
         design_core::NodeConfig::Constant { value } => Some(format!("y = {value}")),
         design_core::NodeConfig::Slice { lsb, .. } => {
             Some(format!("y = a[{}:{}]", lsb + n.width - 1, lsb))
@@ -176,6 +193,8 @@ fn node_labels(n: &design_core::Node) -> NodeLabels {
     NodeLabels {
         tone,
         color: None,
+        gate: None,
+        hide_frame: false,
         symbol: symbol.into(),
         caption,
         state: None,
@@ -199,21 +218,20 @@ fn node_labels(n: &design_core::Node) -> NodeLabels {
                 (p.into(), text(&label, &label, &label))
             })
             .collect(),
-        outputs: [("y".into(), {
-            let port = if n.kind == Kind::Register { "q" } else { "y" };
-            let label = if n.width == 1 {
-                port.into()
-            } else {
-                format!("{port}[{}:0]", n.width - 1)
-            };
-            let label = if n.signed {
-                format!("{label} s")
-            } else {
-                label
-            };
-            text(&label, &label, &label)
-        })]
-        .into(),
+        outputs: n
+            .outputs()
+            .into_iter()
+            .map(|(port, width, signed)| {
+                let display_port = if n.kind == Kind::Register { "q" } else { port };
+                let title = if width == 1 {
+                    display_port.to_string()
+                } else {
+                    format!("{display_port}[{}:0]", width - 1)
+                };
+                let title = if signed { format!("{title} s") } else { title };
+                (port.to_string(), text(&title, &title, &title))
+            })
+            .collect(),
     }
 }
 /// Stateless projection using UNGE's validated Batch and native port geometry.
@@ -241,7 +259,7 @@ pub fn project(
                 id: stable_id("edge", &e.id),
                 from: Endpoint {
                     node: ids[&e.from],
-                    port: "y".into(),
+                    port: e.source_port.clone(),
                 },
                 to: Endpoint {
                     node: ids[&e.to],
@@ -273,6 +291,9 @@ pub struct Renderer {
     sample_version: u64,
     displayed_sample_revision: Option<u64>,
     node_colors: BTreeMap<String, String>,
+    gate_symbols: bool,
+    hide_gate_frames: bool,
+    theme: Theme,
 }
 impl Renderer {
     pub fn new<W: HasWindowHandle + HasDisplayHandle + Send + Sync + 'static>(
@@ -289,6 +310,9 @@ impl Renderer {
             sample_version: 0,
             displayed_sample_revision: None,
             node_colors: BTreeMap::new(),
+            gate_symbols: false,
+            hide_gate_frames: false,
+            theme: Theme::Dark,
         })
     }
     fn sync_document(&mut self, document: &Document) -> Result<(), String> {
@@ -301,10 +325,35 @@ impl Renderer {
             .as_mut()
             .unwrap()
             .set_node_colors(&self.node_colors);
+        self.projection
+            .as_mut()
+            .unwrap()
+            .set_gate_symbols(self.gate_symbols);
+        self.projection
+            .as_mut()
+            .unwrap()
+            .set_hide_gate_frames(self.hide_gate_frames);
         Ok(())
     }
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.theme = theme;
+    }
+    pub fn set_hide_gate_frames(&mut self, hidden: bool) {
+        self.hide_gate_frames = hidden;
+    }
+    pub fn set_gate_symbols(&mut self, enabled: bool) {
+        self.gate_symbols = enabled;
+    }
     pub fn set_node_colors(&mut self, colors: BTreeMap<String, String>) {
-        self.node_colors = colors;
+        let defaults = design_core::default_node_colors();
+        self.node_colors = colors
+            .into_iter()
+            .filter(|(kind, color)| {
+                defaults
+                    .get(kind)
+                    .is_none_or(|v| !v.eq_ignore_ascii_case(color))
+            })
+            .collect();
     }
     pub fn resize(&mut self, width: u32, height: u32) {
         if self.size == [width, height] {
@@ -336,7 +385,7 @@ impl Renderer {
         let maxy = document
             .nodes
             .iter()
-            .map(|n| n.y + node_height(&n.kind) + 60.)
+            .map(|n| n.y + n.height() + 60.)
             .fold(740., f32::max);
         let zoom = (self.size[0] as f32 / (maxx - minx))
             .min(self.size[1] as f32 / (maxy - miny))
@@ -366,7 +415,7 @@ impl Renderer {
                     "zh" => Locale::ZhCn,
                     _ => Locale::En,
                 },
-                Theme::Dark,
+                self.theme,
             )
             .map_err(|e| e.to_string())?;
         self.surface.draw(&scene, viewport)?;
@@ -442,12 +491,12 @@ impl Renderer {
                     "zh" => Locale::ZhCn,
                     _ => Locale::En,
                 },
-                Theme::Dark,
+                self.theme,
             )
             .map_err(|e| e.to_string())?;
         if let Some([x, y, w, h]) = self.dock_target {
             let p = view.viewport.to_world([x, y]);
-            let mut color = Theme::Dark.palette().accent.linear();
+            let mut color = self.theme.palette().accent.linear();
             color[3] = 0.3;
             let width = w / view.viewport.zoom;
             let height = h / view.viewport.zoom;

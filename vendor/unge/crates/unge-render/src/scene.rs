@@ -71,10 +71,14 @@ struct RenderNode {
     required_inputs: Vec<usize>,
     output_names: Vec<String>,
 }
+#[derive(Clone)]
 struct RenderEdge {
-    points: [[f32; 2]; 6],
+    points: Vec<[f32; 2]>,
+    bridges: Vec<[f32; 2]>,
+    blocked: bool,
     bounds: Rect,
     source_type: String,
+    signal_width: Option<u8>,
     from: (Id, usize),
     to: (Id, usize),
 }
@@ -106,16 +110,20 @@ impl RenderEdge {
         let j = to.inputs.iter().position(|p| p.name == edge.to.port)?;
         let from_rect = doc.placement().get(&from.id).copied().unwrap_or_default();
         let to_rect = doc.placement().get(&to.id).copied().unwrap_or_default();
-        let points = orthogonal(
+        let points = [
             port_anchor(from_rect, i, from.outputs.len(), true),
             port_anchor(to_rect, j, to.inputs.len(), false),
-            from_rect.y + from_rect.height,
-            to_rect.y + to_rect.height,
-        );
+        ];
         Some(Self {
-            points,
-            bounds: route_bounds(points),
+            points: points.to_vec(),
+            bridges: Vec::new(),
+            blocked: false,
+            bounds: route_bounds(&points),
             source_type: from.type_id.clone(),
+            signal_width: match from.outputs[i].data_type {
+                unge_core::DataType::Bits { width, .. } => Some(width),
+                _ => None,
+            },
             from: (from.id, i),
             to: (to.id, j),
         })
@@ -128,7 +136,8 @@ struct CachedNode {
     labels: Vec<TextLabel>,
 }
 struct CachedEdge {
-    points: [[f32; 2]; 6],
+    points: Vec<[f32; 2]>,
+    bridges: Vec<[f32; 2]>,
     zoom: f32,
     color: [f32; 4],
     width: u8,
@@ -269,23 +278,7 @@ fn curve(a: [f32; 2], b: [f32; 2]) -> [[f32; 2]; 4] {
     let dx = ((b[0] - a[0]).abs() * 0.5).max(50.0);
     [a, [a[0] + dx, a[1]], [b[0] - dx, b[1]], b]
 }
-fn orthogonal(a: [f32; 2], b: [f32; 2], from_bottom: f32, to_bottom: f32) -> [[f32; 2]; 6] {
-    if a[0] <= b[0] {
-        let x = (a[0] + b[0]) * 0.5;
-        [a, [x, a[1]], [x, b[1]], b, b, b]
-    } else {
-        let y = from_bottom.max(to_bottom) + 24.0;
-        [
-            a,
-            [a[0] + 18.0, a[1]],
-            [a[0] + 18.0, y],
-            [b[0] - 18.0, y],
-            [b[0] - 18.0, b[1]],
-            b,
-        ]
-    }
-}
-fn route_bounds(points: [[f32; 2]; 6]) -> Rect {
+fn route_bounds(points: &[[f32; 2]]) -> Rect {
     let min_x = points.iter().map(|p| p[0]).fold(f32::INFINITY, f32::min) - 2.0;
     let max_x = points
         .iter()
@@ -305,9 +298,9 @@ fn route_bounds(points: [[f32; 2]; 6]) -> Rect {
         height: max_y - min_y,
     }
 }
-// World-space geometry with a one framebuffer-pixel lower bound.
-fn wire_width(zoom: f32, bus: bool) -> f32 {
-    (if bus { 4.5_f32 } else { 2.5_f32 }).max(1.0 / zoom)
+// One stroke policy for nets, internal leads, gate outlines and previews.
+fn wire_width(zoom: f32) -> f32 {
+    3.0_f32.max(1.5 / zoom)
 }
 fn expanded(rect: Rect, padding: f32) -> Rect {
     Rect {
@@ -321,10 +314,55 @@ fn push_curve(scene: &mut Scene, points: [[f32; 2]; 4], zoom: f32, color: [f32; 
     crate::curves::for_each_segment(points, zoom, |a, b| {
         scene
             .quads
-            .push(Quad::stroke(a, b, color, wire_width(zoom, false)));
+            .push(Quad::stroke(a, b, color, wire_width(zoom)));
     });
 }
 impl SceneIndex {
+    fn route_edges(
+        nodes: &BTreeMap<Id, RenderNode>,
+        edges: &mut BTreeMap<Id, RenderEdge>,
+        placement: &BTreeMap<Id, Rect>,
+    ) {
+        let rect = |id: &Id| placement.get(id).copied().unwrap_or(nodes[id].rect);
+        let obstacles = nodes
+            .keys()
+            .map(|id| {
+                let r = rect(id);
+                studio_routing::Obstacle {
+                    id: id.as_u128(),
+                    rect: [r.x, r.y, r.width, r.height],
+                }
+            })
+            .collect();
+        let links: Vec<_> = edges
+            .iter()
+            .map(|(id, e)| studio_routing::Link {
+                id: id.as_u128(),
+                source: (e.from.0.as_u128(), e.from.1),
+                target: (e.to.0.as_u128(), e.to.1),
+                start: port_anchor(rect(&e.from.0), e.from.1, nodes[&e.from.0].outputs, true),
+                end: port_anchor(rect(&e.to.0), e.to.1, nodes[&e.to.0].inputs, false),
+            })
+            .collect();
+        let mut routes = studio_routing::Router::new(obstacles).route_all(&links);
+        for link in links {
+            let route = routes.remove(&link.id).unwrap();
+            let edge = edges.get_mut(&Id::from_u128(link.id)).unwrap();
+            edge.bounds = if route.blocked {
+                route_bounds(&[link.start, link.end])
+            } else {
+                expanded(route_bounds(&route.points), 8.)
+            };
+            edge.points = route.points;
+            edge.bridges = route.bridges;
+            edge.blocked = route.blocked;
+        }
+    }
+    fn reroute(&mut self) {
+        Self::route_edges(&self.nodes, &mut self.edges, &BTreeMap::new());
+        self.edge_index =
+            SpatialIndex::from_rects(self.edges.iter().map(|(id, e)| (*id, e.bounds)).collect());
+    }
     pub fn new(doc: &Document) -> Self {
         let nodes = doc
             .graph()
@@ -346,7 +384,7 @@ impl SceneIndex {
             edges.insert(*id, edge);
         }
 
-        Self {
+        let mut index = Self {
             nodes,
             edges,
             incident,
@@ -355,7 +393,9 @@ impl SceneIndex {
             groups: crate::groups::GroupIndex::new(doc),
             node_cache: RefCell::new(BTreeMap::new()),
             edge_cache: RefCell::new(BTreeMap::new()),
-        }
+        };
+        index.reroute();
+        index
     }
     /// The index must correspond to the state immediately before the captured
     /// command. Document validation and revision checks remain the host's job.
@@ -477,6 +517,7 @@ impl SceneIndex {
         if !changes.nodes.is_empty() || changes.groups_changed {
             self.groups = crate::groups::GroupIndex::new(doc);
         }
+        self.reroute();
         SceneUpdate::Incremental
     }
     pub fn scene(&self, viewport: Viewport, selection: &BTreeSet<Id>) -> unge_core::Result<Scene> {
@@ -615,55 +656,70 @@ impl SceneIndex {
         }
         timings.groups_ms = elapsed_ms(start);
         let start = TIMED.then(Instant::now);
-        let cable_area = expanded(
-            area,
-            wire_width(viewport.zoom, true) * 0.5 + 1.0 / viewport.zoom,
-        );
-        let edges = visible_ids(
-            self.edge_index.query(cable_area),
-            preview
-                .placement
-                .keys()
-                .flat_map(|id| self.incident.get(id).into_iter().flatten().copied()),
-        );
+        let cable_area = expanded(area, wire_width(viewport.zoom) * 0.5 + 1.0 / viewport.zoom);
+        let preview_edges = (!preview.placement.is_empty()).then(|| {
+            let mut edges = self.edges.clone();
+            Self::route_edges(&self.nodes, &mut edges, &preview.placement);
+            edges
+        });
+        // A moved obstacle can displace a wire that has no endpoint on it.
+        let edge_map = preview_edges.as_ref().unwrap_or(&self.edges);
+        let edges: Vec<_> = if preview_edges.is_some() {
+            edge_map
+                .iter()
+                .filter_map(|(id, e)| e.bounds.intersects(cable_area).then_some(*id))
+                .collect()
+        } else {
+            self.edge_index.query(cable_area)
+        };
         timings.edge_query_ms = elapsed_ms(start);
         let start = TIMED.then(Instant::now);
         for id in edges {
-            let edge = &self.edges[&id];
-            let moved = preview.placement.contains_key(&edge.from.0)
-                || preview.placement.contains_key(&edge.to.0);
-            let points = if moved {
-                let from = &self.nodes[&edge.from.0];
-                let to = &self.nodes[&edge.to.0];
-                let from_rect = preview
-                    .placement
-                    .get(&edge.from.0)
-                    .copied()
-                    .unwrap_or(from.rect);
-                let to_rect = preview
-                    .placement
-                    .get(&edge.to.0)
-                    .copied()
-                    .unwrap_or(to.rect);
-                orthogonal(
-                    port_anchor(from_rect, edge.from.1, from.outputs, true),
-                    port_anchor(to_rect, edge.to.1, to.inputs, false),
-                    from_rect.y + from_rect.height,
-                    to_rect.y + to_rect.height,
-                )
-            } else {
-                edge.points
-            };
-            let bounds = if moved {
-                route_bounds(points)
-            } else {
-                edge.bounds
-            };
+            let edge = &edge_map[&id];
+            let points = &edge.points;
+            let bounds = edge.bounds;
             if !bounds.intersects(cable_area) {
                 continue;
             }
+            if edge.blocked {
+                for (node_id, port, output) in [
+                    (edge.from.0, edge.from.1, true),
+                    (edge.to.0, edge.to.1, false),
+                ] {
+                    let node = &self.nodes[&node_id];
+                    let rect = preview
+                        .placement
+                        .get(&node_id)
+                        .copied()
+                        .unwrap_or(node.rect);
+                    let anchor = port_anchor(
+                        rect,
+                        port,
+                        if output { node.outputs } else { node.inputs },
+                        output,
+                    );
+                    scene.labels.push(TextLabel {
+                        text: "!".into(),
+                        rect: Rect {
+                            x: anchor[0] + if output { 4. } else { -18. },
+                            y: anchor[1] - 24.,
+                            width: 16.,
+                            height: 24.,
+                        },
+                        font_size: 20.,
+                        right_aligned: false,
+                        centered: true,
+                        bold: true,
+                        color: palette.cable_invalid.linear(),
+                        after_quad: scene.quads.len(),
+                    });
+                }
+            }
             let signal = catalog.get(&edge.source_type);
-            let width = signal.map_or(1, |label| label.signal_width).max(1);
+            let width = edge
+                .signal_width
+                .unwrap_or_else(|| signal.map_or(1, |label| label.signal_width))
+                .max(1);
             let color = catalog
                 .get(&edge.source_type)
                 .filter(|labels| labels.color.is_some() || labels.tone != crate::NodeTone::Neutral)
@@ -675,7 +731,8 @@ impl SceneIndex {
                 });
             let color = color.linear();
             let hit = self.edge_cache.borrow().get(&id).is_some_and(|c| {
-                c.points == points
+                c.points == *points
+                    && c.bridges == edge.bridges
                     && c.zoom == viewport.zoom
                     && c.color == color
                     && c.width == width
@@ -687,20 +744,26 @@ impl SceneIndex {
                 scene.geometry_stats.reused_edges += 1;
             } else {
                 let start = scene.quads.len();
-                for segment in points.windows(2) {
+                let routed = studio_routing::Route {
+                    points: points.clone(),
+                    bridges: edge.bridges.clone(),
+                    blocked: edge.blocked,
+                };
+                for segment in routed.display_points().windows(2) {
                     if segment[0] != segment[1] {
                         scene.quads.push(Quad::stroke(
                             segment[0],
                             segment[1],
                             color,
-                            wire_width(viewport.zoom, width > 1),
+                            wire_width(viewport.zoom),
                         ));
                     }
                 }
                 self.edge_cache.borrow_mut().insert(
                     id,
                     CachedEdge {
-                        points,
+                        points: points.clone(),
+                        bridges: edge.bridges.clone(),
                         zoom: viewport.zoom,
                         color,
                         width,
@@ -823,10 +886,13 @@ impl SceneIndex {
                 scene.visible_nodes += 1;
                 continue;
             }
+            let frame_free = labels.is_some_and(|l| l.gate.is_some() && l.hide_frame);
+            let outline_gate =
+                tiny && theme == Theme::Light && labels.and_then(|l| l.gate).is_some();
             let qstart = scene.quads.len();
             let lstart = scene.labels.len();
             // A single soft SDF instance for depth; skip ornament at overview zoom.
-            if viewport.zoom >= 0.6 {
+            if viewport.zoom >= 0.6 && !frame_free {
                 let mut shadow = palette.shadow.linear();
                 shadow[3] = 0.24;
                 let mut q = Quad::rectangle(
@@ -842,7 +908,7 @@ impl SceneIndex {
                 q.params[3] = 7.0;
                 scene.quads.push(q);
             }
-            if selected {
+            if selected && !outline_gate && !frame_free {
                 let mut halo = palette.accent.linear();
                 halo[3] = 0.22;
                 scene.quads.push(Quad::rectangle(
@@ -865,25 +931,78 @@ impl SceneIndex {
             } else {
                 palette.border.linear()
             };
-            scene
-                .quads
-                .push(Quad::rectangle(rect, border, NODE_CORNER_RADIUS));
             let inset = if selected { 2.0 } else { 1.0 };
-            scene.quads.push(Quad::rectangle(
-                Rect {
-                    x: rect.x + inset,
-                    y: rect.y + inset,
-                    width: (rect.width - 2.0 * inset).max(0.1),
-                    height: (rect.height - 2.0 * inset).max(0.1),
-                },
-                if tiny {
-                    overview_fill
-                } else {
-                    palette.node.linear()
-                },
-                9.0,
-            ));
-            if tiny {
+            if frame_free {
+                if selected {
+                    draw_selection_corners(
+                        &mut scene.quads,
+                        rect,
+                        palette.accent.linear(),
+                        2.0 / viewport.zoom,
+                    );
+                }
+            } else if outline_gate {
+                draw_node_outline(
+                    &mut scene.quads,
+                    rect,
+                    if selected {
+                        palette.accent.linear()
+                    } else {
+                        tone
+                    },
+                    (if selected { 2.0 } else { 1.0 }) / viewport.zoom,
+                );
+            } else {
+                scene
+                    .quads
+                    .push(Quad::rectangle(rect, border, NODE_CORNER_RADIUS));
+                scene.quads.push(Quad::rectangle(
+                    Rect {
+                        x: rect.x + inset,
+                        y: rect.y + inset,
+                        width: (rect.width - 2.0 * inset).max(0.1),
+                        height: (rect.height - 2.0 * inset).max(0.1),
+                    },
+                    if tiny {
+                        overview_fill
+                    } else {
+                        palette.node.linear()
+                    },
+                    9.0,
+                ));
+            }
+            if tiny && labels.and_then(|l| l.gate).is_some() {
+                let gate = labels.unwrap().gate.unwrap();
+                let bounds = Rect {
+                    x: rect.x + rect.width * 0.16,
+                    y: rect.y + rect.height * 0.16,
+                    width: rect.width * 0.68,
+                    height: rect.height * 0.68,
+                };
+                let stroke = wire_width(viewport.zoom);
+                draw_gate(
+                    &mut scene.quads,
+                    gate,
+                    bounds,
+                    if outline_gate || frame_free {
+                        tone
+                    } else {
+                        [1.0; 4]
+                    },
+                    stroke,
+                );
+                if outline_gate || frame_free {
+                    draw_gate_leads(
+                        &mut scene.quads,
+                        gate,
+                        rect,
+                        bounds,
+                        node.inputs,
+                        tone,
+                        stroke,
+                    );
+                }
+            } else if tiny {
                 let symbol = labels.map(|l| l.symbol.as_str()).unwrap_or("?");
                 let symbol = match symbol {
                     "M" => "MUX",
@@ -912,7 +1031,7 @@ impl SceneIndex {
                     after_quad: scene.quads.len(),
                 });
             }
-            if viewport.zoom >= 0.6 && rect.width >= 48.0 && rect.height >= 40.0 {
+            if !frame_free && viewport.zoom >= 0.6 && rect.width >= 48.0 && rect.height >= 40.0 {
                 // Opaque tint in linear space: inexpensive header separation in both themes.
                 // Keep the existing port anchors and dense-node label clearance unchanged.
                 let mut header = palette.node.linear();
@@ -1016,7 +1135,27 @@ impl SceneIndex {
                 let detail_font = 12.0_f32.max(11.0 / viewport.zoom);
                 let title_height = title_font * 1.3;
                 let state = labels.and_then(|l| l.state.as_ref());
-                if has_symbol && state.is_none() {
+                let gate = labels.and_then(|l| l.gate);
+                if let Some(gate) = gate {
+                    let bounds = Rect {
+                        x: rect.x + rect.width * 0.5 - 50.0,
+                        y: rect.y + rect.height * 0.5 - 50.0,
+                        width: 100.0,
+                        height: 100.0,
+                    };
+                    let stroke = wire_width(viewport.zoom);
+                    draw_gate(&mut scene.quads, gate, bounds, tone, stroke);
+                    draw_gate_leads(
+                        &mut scene.quads,
+                        gate,
+                        rect,
+                        bounds,
+                        node.inputs,
+                        tone,
+                        stroke,
+                    );
+                }
+                if has_symbol && state.is_none() && gate.is_none() {
                     let center = rect.x + rect.width * 0.5;
                     let top = rect.y + (rect.height - SYMBOL_SIZE) * 0.5;
                     let is_register = symbol == "D/Q";
@@ -1051,10 +1190,15 @@ impl SceneIndex {
                             scene.quads.push(Quad::line(a, b, tone));
                         }
                     }
+                    let symbol_font = if is_register {
+                        18.0
+                    } else {
+                        fitted_symbol_size(&symbol, SYMBOL_SIZE - 8.0, 25.0)
+                    };
                     scene.labels.push(TextLabel {
                         text: if is_register { "D   Q".into() } else { symbol },
                         rect: badge,
-                        font_size: if is_register { 18.0 } else { 25.0 },
+                        font_size: symbol_font,
                         right_aligned: false,
                         centered: true,
                         bold: true,
@@ -1073,7 +1217,11 @@ impl SceneIndex {
                             width: 29.0,
                             height: 20.0,
                         },
-                        font_size: 12.0,
+                        font_size: fitted_symbol_size(
+                            labels.map(|l| l.symbol.as_str()).unwrap_or(""),
+                            27.0,
+                            12.0,
+                        ),
                         right_aligned: false,
                         centered: false,
                         bold: false,
@@ -1133,7 +1281,9 @@ impl SceneIndex {
                         text: value,
                         rect: Rect {
                             x: rect.x + 14.0,
-                            y: rect.y + rect.height * 0.5 - 8.0,
+                            y: rect.y
+                                + rect.height * 0.5
+                                + if gate.is_some() { 65.0 } else { -8.0 },
                             width: rect.width - 28.0,
                             height: 29.0,
                         },
@@ -1172,8 +1322,8 @@ impl SceneIndex {
                         for (i, name) in names.iter().enumerate() {
                             let anchor = port_anchor(rect, i, names.len(), output)[1];
                             let center = rect.y + rect.height * 0.5;
-                            let mut y = anchor - 15.0;
-                            if state.is_some() {
+                            let mut y = anchor - if gate.is_some() { 34.0 } else { 15.0 };
+                            if state.is_some() && gate.is_none() {
                                 y = if anchor <= center {
                                     y.min(center - 43.0)
                                 } else {
@@ -1203,9 +1353,14 @@ impl SceneIndex {
                                     }
                                 },
                                 rect: Rect {
-                                    x: rect.x + if output { rect.width - 116.0 } else { 12.0 },
+                                    x: rect.x
+                                        + if output {
+                                            rect.width - if gate.is_some() { 88.0 } else { 116.0 }
+                                        } else {
+                                            12.0
+                                        },
                                     y,
-                                    width: 104.0,
+                                    width: if gate.is_some() { 76.0 } else { 104.0 },
                                     height: 31.0,
                                 },
                                 font_size: 24.0,
@@ -1312,5 +1467,109 @@ mod visibility_tests {
                 );
             }
         }
+    }
+}
+
+fn draw_gate(
+    quads: &mut Vec<Quad>,
+    gate: crate::GateSymbol,
+    rect: Rect,
+    color: [f32; 4],
+    width: f32,
+) {
+    for path in gate.paths() {
+        for pair in path.windows(2) {
+            let point = |p: [f32; 2]| {
+                [
+                    rect.x + p[0] * rect.width / 100.0,
+                    rect.y + p[1] * rect.height / 100.0,
+                ]
+            };
+            quads.push(Quad::stroke(point(pair[0]), point(pair[1]), color, width));
+        }
+    }
+}
+
+// Leave side bearings inside the rounded badge, including four-letter gate names.
+fn fitted_symbol_size(symbol: &str, available: f32, preferred: f32) -> f32 {
+    preferred.min(available / (symbol.chars().count().max(1) as f32 * 0.8))
+}
+
+// Outline only: leave the canvas grid visible through light-mode overview gates.
+fn draw_node_outline(quads: &mut Vec<Quad>, rect: Rect, color: [f32; 4], width: f32) {
+    let r = NODE_CORNER_RADIUS
+        .min(rect.width * 0.5)
+        .min(rect.height * 0.5);
+    let mut points = Vec::with_capacity(21);
+    for (x, y, start) in [
+        (rect.x + rect.width - r, rect.y + r, -90.0_f32),
+        (rect.x + rect.width - r, rect.y + rect.height - r, 0.0),
+        (rect.x + r, rect.y + rect.height - r, 90.0),
+        (rect.x + r, rect.y + r, 180.0),
+    ] {
+        for i in 0..=4 {
+            let a = (start + 22.5 * i as f32).to_radians();
+            points.push([x + r * a.cos(), y + r * a.sin()]);
+        }
+    }
+    points.push(points[0]);
+    for p in points.windows(2) {
+        quads.push(Quad::stroke(p[0], p[1], color, width));
+    }
+}
+
+// Use the same port-to-symbol routing at every LOD; normalized gate coordinates
+// must scale with the larger overview symbol, including its inversion bubble.
+fn draw_gate_leads(
+    quads: &mut Vec<Quad>,
+    gate: crate::GateSymbol,
+    rect: Rect,
+    bounds: Rect,
+    inputs: usize,
+    color: [f32; 4],
+    width: f32,
+) {
+    for i in 0..inputs {
+        let anchor = port_anchor(rect, i, inputs, false);
+        let y = if inputs == 1 {
+            50.0
+        } else if i == 0 {
+            25.0
+        } else {
+            75.0
+        };
+        let target = [
+            bounds.x + gate.input_x(y) * bounds.width / 100.0,
+            bounds.y + y * bounds.height / 100.0,
+        ];
+        let elbow = bounds.x - 12.0;
+        for (a, b) in [
+            (anchor, [elbow, anchor[1]]),
+            ([elbow, anchor[1]], [elbow, target[1]]),
+            ([elbow, target[1]], target),
+        ] {
+            quads.push(Quad::stroke(a, b, color, width));
+        }
+    }
+    quads.push(Quad::stroke(
+        [
+            bounds.x + (if gate.inverted() { 94.0 } else { 82.0 }) * bounds.width / 100.0,
+            bounds.y + bounds.height / 2.0,
+        ],
+        port_anchor(rect, 0, 1, true),
+        color,
+        width,
+    ));
+}
+
+fn draw_selection_corners(quads: &mut Vec<Quad>, rect: Rect, color: [f32; 4], width: f32) {
+    for (x, y, dx, dy) in [
+        (rect.x, rect.y, 1.0, 1.0),
+        (rect.x + rect.width, rect.y, -1.0, 1.0),
+        (rect.x, rect.y + rect.height, 1.0, -1.0),
+        (rect.x + rect.width, rect.y + rect.height, -1.0, -1.0),
+    ] {
+        quads.push(Quad::stroke([x, y], [x + dx * 18.0, y], color, width));
+        quads.push(Quad::stroke([x, y], [x, y + dy * 18.0], color, width));
     }
 }

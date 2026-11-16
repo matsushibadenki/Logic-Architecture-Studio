@@ -189,6 +189,11 @@ fn compare(
     )
 }
 pub(crate) fn run(root: &Path, workspace: &Workspace, engine: &str) -> Result<Run, String> {
+    if workspace.document.has_modules() {
+        let mut flat = workspace.clone();
+        flat.document = std::sync::Arc::new(workspace.document.flatten()?);
+        return run(root, &flat, engine);
+    }
     let source = workspace.document.rtl()?;
     run_source(root, workspace, engine, &source)
 }
@@ -333,6 +338,34 @@ mod tests {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
+    #[test]
+    #[ignore = "Requires installed Icarus, Verilator and C++ compiler"]
+    fn nested_modules_preserve_signed_pipeline_in_both_simulators() {
+        let mut w = workspace(true);
+        let (first, inner) = w
+            .document
+            .group_module(&["sum".into(), "acc".into()], "Accumulator")
+            .unwrap();
+        let (nested, _) = first
+            .group_module(&[inner, "delay".into()], "Pipeline")
+            .unwrap();
+        w.document = Arc::new(nested);
+        for engine in ["icarus", "verilator"] {
+            let root = Root::new("nested-modules");
+            let result = run(&root.0, &w, engine).unwrap();
+            assert_eq!(result.checks.passed, result.checks.total);
+            assert_eq!(result.comparison["passed"], result.comparison["total"]);
+            assert!(result.vcd.contains("$enddefinitions"));
+            let mut session = crate::simulation::Session::default();
+            session.install_external(&w, result).unwrap();
+            let state = session.execute(&w, "simulation.state", &json!({})).unwrap();
+            assert!(state["session"]["annotation"]["values"]
+                .as_object()
+                .unwrap()
+                .contains_key("current"));
+        }
+    }
+
     fn workspace(sequential: bool) -> Workspace {
         let project: Value = serde_json::from_str(if sequential {
             include_str!("../../../examples/signed-pipeline.json")
@@ -352,6 +385,47 @@ mod tests {
         )
         .unwrap();
         w
+    }
+    #[test]
+    #[ignore = "Requires installed Icarus, Verilator and C++ compiler"]
+    fn gate_symbols_rtl_matches_independent_truth_table() {
+        let root = Root::new("gates");
+        let fixture: Value =
+            serde_json::from_str(include_str!("../../../examples/logic-gates.json")).unwrap();
+        let mut w = Workspace::default();
+        w.document = Arc::new(serde_json::from_value(fixture["document"].clone()).unwrap());
+        Arc::make_mut(&mut w.testbench).rows = [0u64, 1, 85, 255]
+            .into_iter()
+            .flat_map(|a| {
+                [0u64, 1, 170, 255]
+                    .into_iter()
+                    .map(move |b| design_core::testbench::Stimulus {
+                        reset: false,
+                        inputs: BTreeMap::from([
+                            ("a".into(), a.to_string()),
+                            ("b".into(), b.to_string()),
+                        ]),
+                        expected: [
+                            ("and", a & b),
+                            ("or", a | b),
+                            ("xor", a ^ b),
+                            ("not", !a),
+                            ("nand", !(a & b)),
+                            ("nor", !(a | b)),
+                            ("xnor", !(a ^ b)),
+                        ]
+                        .into_iter()
+                        .map(|(k, v)| (format!("out_{k}"), (v & 255).to_string()))
+                        .collect(),
+                    })
+            })
+            .collect();
+        for engine in ["icarus", "verilator"] {
+            let result = run(&root.0, &w, engine).unwrap();
+            assert_eq!(result.comparison["success"], true);
+            assert_eq!(result.checks.passed, 112);
+            assert_eq!(result.checks.total, 112);
+        }
     }
     #[test]
     fn bench_and_parser_enforce_edges_limits_and_complete_known_values() {
@@ -422,7 +496,7 @@ mod tests {
                 // The shared trace and export contain RTL observations, never a replacement Rust trace.
                 let vcd = run.vcd.clone();
                 let mut session = crate::simulation::Session::default();
-                session.install_external(&w, run);
+                session.install_external(&w, run).unwrap();
                 let state = session.execute(&w, "simulation.state", &json!({})).unwrap();
                 assert_eq!(state["session"]["external"]["engine"], engine);
                 let export = session

@@ -39,6 +39,16 @@ pub fn poll(app: &tauri::AppHandle) -> Result<(), String> {
             studio_service::native_sync::apply(None, &response)?
         }
     };
+    if previous
+        .as_ref()
+        .is_none_or(|p| p.meta["theme"] != snapshot.meta["theme"])
+    {
+        app.set_theme(Some(if snapshot.meta["theme"] == "light" {
+            tauri::Theme::Light
+        } else {
+            tauri::Theme::Dark
+        }));
+    }
     super::measurement::native_transfer(
         app,
         snapshot.meta["revision"].as_u64().unwrap_or(0),

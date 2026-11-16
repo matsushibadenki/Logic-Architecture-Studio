@@ -129,6 +129,7 @@ fn extension_bit_patterns_reach_registers_and_reset() {
         })
         .unwrap();
     doc.edges.push(Edge {
+        source_port: "y".into(),
         id: "regout".into(),
         from: "delay".into(),
         to: "sign_out".into(),

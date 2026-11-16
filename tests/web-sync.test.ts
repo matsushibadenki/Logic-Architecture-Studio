@@ -153,10 +153,11 @@ test(
 
 test("appearance changes share the circuit and history", () => {
   const result = apply([
-    { set: { locale: "ja", node_colors: { add: "#ff5533" } } },
+    { set: { locale: "ja", theme: "light", node_colors: { add: "#ff5533" } } },
   ]);
   assert.equal(result.locale, "ja");
   assert.equal(result.node_colors?.add, "#ff5533");
+  assert.equal(result.theme, "light");
   assert.equal(result.document, initial.document);
   assert.equal(result.history, initial.history);
   assert.equal(result.revision, initial.revision);
@@ -184,4 +185,14 @@ test("signed DEC and raw HEX preserve boundaries and negative inputs", async () 
   assert.equal(formatValue("-9223372036854775808", 16, 64, true), "0x8000000000000000");
   assert.equal(formatValue("0x8000000000000000", 10, 64, true), "-9223372036854775808");
   assert.equal(formatValue("1", 10, 1, true), "-1");
+});
+
+test("module definitions survive deltas and nested sequential detection", async () => {
+  const {isSequential} = await import("../src/types.ts");
+  const modules = {Counter:{nodes:[{id:"r",name:"r",kind:"register" as const,width:8,x:0,y:0}],edges:[]}};
+  const result=apply([{set:{},document:{modules}}]);
+  assert.equal(result.document.modules,modules);
+  assert.equal(result.document.nodes,initial.document.nodes);
+  assert.equal(isSequential({...result.document,nodes:[{id:"m",name:"m",kind:"module",width:8,x:0,y:0,config:{type:"module",definition:"Counter",inputs:[],outputs:[{name:"out",width:8,signed:false}]}}]}),true);
+  assert.equal(isSequential(result.document),false);
 });

@@ -115,6 +115,9 @@ pub fn between(old: &Workspace, new: &Workspace) -> Value {
     }
     field!(locale);
     field!(node_colors);
+    field!(gate_symbols);
+    field!(hide_gate_frames);
+    field!(theme);
     if !std::sync::Arc::ptr_eq(&old.testbench, &new.testbench) {
         field!(testbench);
     }
@@ -128,6 +131,9 @@ pub fn between(old: &Workspace, new: &Workspace) -> Value {
     }
     let mut result = json!({"set":set});
     let mut doc = serde_json::Map::new();
+    if old.document.modules != new.document.modules {
+        doc.insert("modules".into(), json!(new.document.modules));
+    }
     if old.document.name != new.document.name {
         doc.insert("name".into(), json!(new.document.name));
     }
@@ -179,6 +185,7 @@ mod tests {
     fn sparse_multiblock_moves_match_full_comparison() {
         let mut old = Workspace::default();
         old.document = std::sync::Arc::new(design_core::Document {
+            modules: Default::default(),
             name: "Large".into(),
             nodes: (0..2000)
                 .map(|i| design_core::Node {

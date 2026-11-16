@@ -1,3 +1,6 @@
+import { ModuleActions } from "./Modules";
+import { useRoutes } from "../routes";
+import { GateSymbol, isGate } from "./GateSymbol";
 import { nodeColor } from "../appearance";
 import type { CSSProperties } from "react";
 import { useRef, useState, useLayoutEffect } from "react";
@@ -14,6 +17,7 @@ import { patch, action, selectNodes } from "../store";
 import { translation } from "../i18n";
 import {
   inputSigned,
+  outputs,
   ports,
   symbols,
   type Snapshot,
@@ -25,7 +29,7 @@ import {
   portY,
   tone,
   caption,
-  cablePath,
+  wireWidth,
   gridSpacing,
   snapToGrid,
 } from "../nodeAppearance";
@@ -38,6 +42,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
   const t = translation(snapshot.locale),
     svg = useRef<SVGSVGElement>(null);
   const [mode, setMode] = useState<"select" | "connect">("select");
+  const [sourcePort, setSourcePort] = useState("y");
   const [source, setSource] = useState<string | null>(null);
   const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
   const [camera, setCamera] = useState({ x: -10, y: -20, w: 1160, h: 740 });
@@ -78,6 +83,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
       ? { ...n, x: n.x + drag.dx, y: n.y + drag.dy }
       : n;
   const nodes = snapshot.document.nodes.map(pos);
+  const routes = useRoutes(snapshot, drag);
   function cancelGesture() {
     gesture.current = null;
     setDrag(null);
@@ -86,7 +92,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
   }
   function labelY(n: Node, index: number, output = false) {
     const anchor = portY(n, index, output),
-      center = nodeHeight(n.kind) / 2;
+      center = nodeHeight(n) / 2;
     const top = !annotation
       ? anchor - 15
       : anchor <= center
@@ -95,6 +101,15 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
     return top + 23;
   }
   const sourceNode = nodes.find((n) => n.id === source);
+  const sourceOutput = sourceNode
+    ? outputs(sourceNode).find((p) => p[0] === sourcePort)
+    : undefined;
+  const sourceIndex = sourceNode
+    ? Math.max(
+        0,
+        outputs(sourceNode).findIndex((p) => p[0] === sourcePort),
+      )
+    : 0;
   const detailed = camera.w < 2000;
   const [canvasSize, setCanvasSize] = useState({ width: 1160, height: 740 });
   useLayoutEffect(() => {
@@ -117,7 +132,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
   const spacing = gridSpacing(scale);
   const tiny = scale < 0.35;
   const safeScale = Math.max(scale, 0.02);
-  const wireWidth = (bus: boolean) => Math.max(bus ? 4.5 : 2.5, 1 / safeScale);
+  const wireStroke = wireWidth(safeScale);
   const portRadius = Math.max(6, (tiny ? 1.5 : 2.5) / safeScale);
   const portRim = Math.max(1.5, 1 / safeScale);
   function point(clientX: number, clientY: number) {
@@ -130,7 +145,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
     const x = Math.min(...nodes.map((n) => n.x)) - 50,
       y = Math.min(...nodes.map((n) => n.y)) - 55,
       w = Math.max(...nodes.map((n) => n.x + W)) - x + 60,
-      h = Math.max(...nodes.map((n) => n.y + nodeHeight(n.kind))) - y + 95;
+      h = Math.max(...nodes.map((n) => n.y + nodeHeight(n))) - y + 95;
     setCamera({ x, y, w, h });
   }
   function zoom(factor: number) {
@@ -177,9 +192,10 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
     if (!pan) setPreviewSelection(ids);
     e.currentTarget.setPointerCapture(e.pointerId);
   }
-  async function portClick(id: string, port?: string) {
+  async function portClick(id: string, port?: string, outputPort = "y") {
     if (!port) {
       setSource(id);
+      setSourcePort(outputPort);
       setMode("connect");
       setPointer(null);
     } else if (source) {
@@ -190,6 +206,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
             edge: {
               id: `e_${Date.now().toString(36)}`,
               from: source,
+              source_port: sourcePort,
               to: id,
               port,
             },
@@ -204,6 +221,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
   return (
     <div className="canvas-wrap">
       <div className="canvas-toolbar">
+        <ModuleActions snapshot={snapshot} />
         <IconButton
           label={t("select")}
           icon={MousePointer2}
@@ -262,7 +280,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
         style={
           {
             "--port-rim": portRim,
-            "--preview-width": wireWidth(false),
+            "--preview-width": wireStroke,
           } as CSSProperties
         }
         viewBox={`${camera.x} ${camera.y} ${camera.w} ${camera.h}`}
@@ -320,7 +338,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                   n.x <= box.x + box.width &&
                   n.x + W >= box.x &&
                   n.y <= box.y + box.height &&
-                  n.y + nodeHeight(n.kind) >= box.y,
+                  n.y + nodeHeight(n) >= box.y,
               )
               .map((n) => n.id);
             g.ids = [
@@ -395,31 +413,62 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
           const a = nodes.find((n) => n.id === e.from)!,
             b = nodes.find((n) => n.id === e.to)!;
           const index = ports(b).findIndex(([p]) => p === e.port);
-          const d = cablePath(a, b, index);
+          const route = routes[e.id];
+          if (!route) return null;
+          const out = outputs(a).find((p) => p[0] === (e.source_port ?? "y"));
+          const outputIndex = Math.max(
+            0,
+            outputs(a).findIndex((p) => p[0] === (e.source_port ?? "y")),
+          );
+          const d = route.points
+            .map((p, i) => `${i ? "L" : "M"} ${p[0]} ${p[1]}`)
+            .join(" ");
           return (
             <g
               key={e.id}
               style={
                 {
                   "--node-tone": nodeColor(snapshot, a.kind),
-                  "--wire-width": `${wireWidth(a.width > 1)}px`,
+                  "--wire-width": `${wireStroke}px`,
                 } as CSSProperties
               }
               className={`wire tone-${tone(a.kind)} ${selection.includes(e.from) || selection.includes(e.to) ? "highlighted" : ""}`}
             >
+              {route.blocked && (
+                <>
+                  <text
+                    x={a.x + W + 6}
+                    y={a.y + portY(a, outputIndex, true) - 10}
+                    fill="var(--color-warning)"
+                    fontSize={20}
+                    fontWeight={700}
+                  >
+                    !
+                  </text>
+                  <text
+                    x={b.x - 18}
+                    y={b.y + portY(b, index) - 10}
+                    fill="var(--color-warning)"
+                    fontSize={20}
+                    fontWeight={700}
+                  >
+                    !
+                  </text>
+                </>
+              )}
               <path className="wire-shadow" d={d} />
               <path
                 className="wire-core"
                 d={d}
-                style={{ strokeWidth: wireWidth(a.width > 1) }}
+                style={{ strokeWidth: wireStroke }}
               />
               {detailed && (
                 <text
                   className="wire-value"
                   x={a.x + W + 8}
-                  y={a.y + portY(a, 0, true) - 12}
+                  y={a.y + portY(a, outputIndex, true) - 12}
                 >
-                  {a.width > 1 ? `/${a.width}` : ""}
+                  {out && out[1] > 1 ? `/${out[1]}` : ""}
                   {annotation?.values[a.id] != null
                     ? ` · ${annotation.values[a.id]}`
                     : ""}
@@ -439,7 +488,9 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                 }}
               />
               <title>
-                {e.from}.y → {e.to}.{e.port} · {a.width} bit
+                {route.blocked ? `${t("routingBlocked")} · ` : ""}
+                {e.from}.{e.source_port ?? "y"} → {e.to}.{e.port} · {out?.[1]}{" "}
+                bit
               </title>
             </g>
           );
@@ -452,11 +503,14 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
               } as CSSProperties
             }
             className={`connection-preview tone-${tone(sourceNode.kind)}`}
-            d={`M ${sourceNode.x + W} ${sourceNode.y + portY(sourceNode, 0, true)} C ${sourceNode.x + W + 60} ${sourceNode.y + portY(sourceNode, 0, true)} ${pointer.x - 60} ${pointer.y} ${pointer.x} ${pointer.y}`}
+            d={`M ${sourceNode.x + W} ${sourceNode.y + portY(sourceNode, sourceIndex, true)} C ${sourceNode.x + W + 60} ${sourceNode.y + portY(sourceNode, sourceIndex, true)} ${pointer.x - 60} ${pointer.y} ${pointer.x} ${pointer.y}`}
           />
         ) : null}
         {nodes.map((n) => {
-          const h = nodeHeight(n.kind);
+          const h = nodeHeight(n);
+          const gate = snapshot.gate_symbols && isGate(n.kind);
+          const frameFree = gate && snapshot.hide_gate_frames;
+          const badgeWidth = Math.max(22, symbols[n.kind].length * 9 + 8);
           const missing = snapshot.diagnostics.filter(
             (d) => d.node === n.id,
           ).length;
@@ -468,12 +522,12 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
               style={
                 { "--node-tone": nodeColor(snapshot, n.kind) } as CSSProperties
               }
-              className={`circuit-node tone-${tone(n.kind)} ${selected ? "selected" : ""} ${source === n.id ? "connecting" : ""} ${drag?.ids.includes(n.id) ? "dragged" : ""}`}
+              className={`circuit-node ${gate ? "gate-node" : ""} ${frameFree ? "frame-free" : ""} tone-${tone(n.kind)} ${selected ? "selected" : ""} ${source === n.id ? "connecting" : ""} ${drag?.ids.includes(n.id) ? "dragged" : ""}`}
               transform={`translate(${n.x},${n.y})`}
               tabIndex={0}
               role="button"
               aria-pressed={selected}
-              aria-label={`${n.name}, ${n.kind}, ${n.width}{n.signed ? "s" : "u"}`}
+              aria-label={`${n.name}, ${n.kind}, ${n.width}${n.signed ? "s" : "u"}`}
               onKeyDown={(e) => {
                 if (e.key === "Enter")
                   void selectNodes(
@@ -509,6 +563,12 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                   rx="14"
                 />
               ) : null}
+              {frameFree && selected && (
+                <path
+                  className="node-selection-corners"
+                  d={`M18 0 H0 V18 M${W - 18} 0 H${W} V18 M0 ${h - 18} V${h} H18 M${W} ${h - 18} V${h} H${W - 18}`}
+                />
+              )}
               <rect className="node-body" width={W} height={h} rx="9" />
               <path
                 className="node-header-fill"
@@ -519,19 +579,24 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                 className="node-symbol-badge"
                 x="9"
                 y="7"
-                width="22"
+                width={badgeWidth}
                 height="22"
                 rx="4"
               />
               <text
                 className="node-header-symbol"
-                x="20"
+                x={9 + badgeWidth / 2}
+                style={{ fontSize: symbols[n.kind].length > 2 ? 12 : 15 }}
                 y="23"
                 textAnchor="middle"
               >
                 {n.kind === "mux" ? "M" : symbols[n.kind]}
               </text>
-              <text className="node-title" x="40" y="23">
+              <text
+                className="node-title"
+                x={frameFree ? 12 : badgeWidth + 18}
+                y="23"
+              >
                 {n.name.length > 17 ? `${n.name.slice(0, 15)}…` : n.name}
               </text>
               {missing ? (
@@ -559,12 +624,21 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                 {n.width}
                 {n.signed ? "s" : "u"}
               </text>
+              {gate && (
+                <GateSymbol
+                  kind={n.kind}
+                  height={h}
+                  tiny={tiny}
+                  light={snapshot.theme === "light" || !!frameFree}
+                  zoom={safeScale}
+                />
+              )}
               {annotation?.values[n.id] != null && (
                 <>
                   <text
                     className="node-live-value"
                     x={14}
-                    y={h / 2 + 10}
+                    y={h / 2 + (gate ? 88 : 10)}
                     fontSize={annotation.values[n.id].length > 12 ? 12 : 20}
                   >
                     {n.kind === "register" ? "Q = " : ""}
@@ -583,10 +657,11 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                 );
                 const compatible =
                   sourceNode &&
-                  sourceNode.width === width &&
+                  sourceOutput?.[1] === width &&
                   (inputSigned(n, p) === undefined ||
-                    inputSigned(n, p) === !!sourceNode.signed) &&
-                  (sourceNode.id !== n.id || n.kind === "register") &&
+                    inputSigned(n, p) === sourceOutput?.[2]) &&
+                  (sourceNode.id !== n.id ||
+                    ["register", "module"].includes(n.kind)) &&
                   !connected;
                 return (
                   <g
@@ -640,50 +715,55 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                   </g>
                 );
               })}
-              {n.kind !== "output" ? (
+              {outputs(n).map(([port, width, signed], outputIndex) => (
                 <g
+                  key={port}
                   className="port output-port is-connected"
                   role="button"
                   tabIndex={0}
-                  aria-label={`${n.name}.y ${n.width}{n.signed ? "s" : "u"}`}
+                  aria-label={`${n.name}.${port} ${width}${signed ? "s" : "u"}`}
                   onPointerDown={(e) => e.stopPropagation()}
                   onClick={(e) => {
                     e.stopPropagation();
-                    void portClick(n.id);
+                    void portClick(n.id, undefined, port);
                   }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       e.stopPropagation();
-                      void portClick(n.id);
+                      void portClick(n.id, undefined, port);
                     }
                   }}
                 >
                   <circle
                     className="port-hit"
                     cx={W}
-                    cy={portY(n, 0, true)}
+                    cy={portY(n, outputIndex, true)}
                     r="12"
                   />
                   <circle
                     className="port-ring"
                     cx={W}
-                    cy={portY(n, 0, true)}
+                    cy={portY(n, outputIndex, true)}
                     r={portRadius - (tiny ? 0 : portRim / 2)}
                   />
                   <circle
                     className="port-center"
                     cx={W}
-                    cy={portY(n, 0, true)}
+                    cy={portY(n, outputIndex, true)}
                     r={Math.max(2.5, 0.8 / safeScale)}
                   />
-                  <text x={W - 12} y={labelY(n, 0, true)} textAnchor="end">
-                    {n.kind === "register" ? "q" : "y"}
-                    {n.width > 1 ? `[${n.width - 1}:0]` : ""}
-                    {n.signed ? " s" : ""}
+                  <text
+                    x={W - 12}
+                    y={labelY(n, outputIndex, true)}
+                    textAnchor="end"
+                  >
+                    {n.kind === "register" ? "q" : port}
+                    {width > 1 ? `[${width - 1}:0]` : ""}
+                    {signed ? " s" : ""}
                   </text>
                 </g>
-              ) : null}
-              {tiny && (
+              ))}
+              {tiny && !gate && (
                 <text
                   className="node-overview-symbol"
                   x={W / 2}
@@ -691,18 +771,20 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
                   textAnchor="middle"
                   dominantBaseline="central"
                   fontSize={
-                    [
-                      "mux",
-                      "register",
-                      "slice",
-                      "concat",
-                      "zero_extend",
-                      "sign_extend",
-                    ].includes(n.kind)
-                      ? 100
-                      : n.kind === "or"
-                        ? 140
-                        : 167
+                    symbols[n.kind].length > 3
+                      ? 70
+                      : [
+                            "mux",
+                            "register",
+                            "slice",
+                            "concat",
+                            "zero_extend",
+                            "sign_extend",
+                          ].includes(n.kind)
+                        ? 100
+                        : n.kind === "or"
+                          ? 140
+                          : 167
                   }
                 >
                   {n.kind === "input"
@@ -733,7 +815,7 @@ export function CircuitCanvas({ snapshot }: { snapshot: Snapshot }) {
         {source ? (
           <span className="connection-prompt">
             <Info size={12} />
-            {source}.y → …
+            {source}.{sourcePort} → …
           </span>
         ) : (
           <span>IR / {snapshot.document.name}</span>

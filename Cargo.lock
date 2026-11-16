@@ -626,6 +626,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.21",
 ]
 
@@ -3444,6 +3445,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "studio-routing"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "studio-service"
 version = "0.1.0"
 dependencies = [
@@ -3452,6 +3460,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "studio-routing",
 ]
 
 [[package]]
@@ -4187,6 +4196,7 @@ dependencies = [
  "bytemuck",
  "cosmic-text",
  "serde",
+ "studio-routing",
  "unge-core",
  "unge-interaction",
  "wgpu",

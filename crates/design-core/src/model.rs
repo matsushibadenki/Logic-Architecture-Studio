@@ -10,6 +10,9 @@ pub enum Kind {
     Add,
     Sub,
     And,
+    Nand,
+    Nor,
+    Xnor,
     Or,
     Xor,
     Not,
@@ -20,12 +23,18 @@ pub enum Kind {
     Concat,
     ZeroExtend,
     SignExtend,
+    Module,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NodeConfig {
     #[default]
     None,
+    Module {
+        definition: String,
+        inputs: Vec<ModulePort>,
+        outputs: Vec<ModulePort>,
+    },
     Constant {
         value: String,
     },
@@ -49,6 +58,20 @@ impl NodeConfig {
         matches!(self, Self::None)
     }
 }
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModulePort {
+    pub name: String,
+    pub width: u8,
+    #[serde(default)]
+    pub signed: bool,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModuleDefinition {
+    pub nodes: Entities<Node>,
+    pub edges: Entities<Edge>,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Node {
@@ -68,6 +91,11 @@ pub struct Node {
 pub struct Edge {
     pub id: String,
     pub from: String,
+    #[serde(
+        default = "default_source_port",
+        skip_serializing_if = "is_default_source_port"
+    )]
+    pub source_port: String,
     pub to: String,
     pub port: String,
 }
@@ -77,6 +105,8 @@ pub struct Document {
     pub name: String,
     pub nodes: Entities<Node>,
     pub edges: Entities<Edge>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub modules: BTreeMap<String, std::sync::Arc<ModuleDefinition>>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Diagnostic {
@@ -144,6 +174,12 @@ pub fn valid_identifier(s: &str) -> bool {
         ]
         .contains(&s)
 }
+pub fn default_source_port() -> String {
+    "y".into()
+}
+fn is_default_source_port(port: &String) -> bool {
+    port == "y"
+}
 impl Kind {
     pub fn key(&self) -> &'static str {
         match self {
@@ -152,6 +188,9 @@ impl Kind {
             Self::Add => "add",
             Self::Sub => "sub",
             Self::And => "and",
+            Self::Nand => "nand",
+            Self::Nor => "nor",
+            Self::Xnor => "xnor",
             Self::Or => "or",
             Self::Xor => "xor",
             Self::Not => "not",
@@ -162,12 +201,13 @@ impl Kind {
             Self::Concat => "concat",
             Self::ZeroExtend => "zero_extend",
             Self::SignExtend => "sign_extend",
+            Self::Module => "module",
         }
     }
 
     pub fn input_names(&self) -> &'static [&'static str] {
         match self {
-            Self::Input | Self::Constant => &[],
+            Self::Input | Self::Constant | Self::Module => &[],
             Self::Slice | Self::ZeroExtend | Self::SignExtend => &["a"],
             Self::Concat => &["hi", "lo"],
             Self::Register => &["d"],
@@ -186,7 +226,30 @@ fn is_false(value: &bool) -> bool {
     !value
 }
 impl Node {
+    pub fn height(&self) -> f32 {
+        NODE_WIDTH.max((self.inputs().len().max(self.outputs().len()).max(1) + 1) as f32 * 64.)
+    }
+    pub fn outputs(&self) -> Vec<(&str, u8, bool)> {
+        match &self.config {
+            NodeConfig::Module { outputs, .. } => outputs
+                .iter()
+                .map(|p| (p.name.as_str(), p.width, p.signed))
+                .collect(),
+            _ if self.kind == Kind::Output => vec![],
+            _ => vec![("y", self.width, self.signed)],
+        }
+    }
+    pub fn output(&self, port: &str) -> Result<(u8, bool), String> {
+        self.outputs()
+            .into_iter()
+            .find(|p| p.0 == port)
+            .map(|(_, w, s)| (w, s))
+            .ok_or_else(|| format!("Unknown source port: {}.{port}", self.name))
+    }
     pub fn input_signed(&self, port: &str) -> Option<bool> {
+        if let NodeConfig::Module { inputs, .. } = &self.config {
+            return inputs.iter().find(|p| p.name == port).map(|p| p.signed);
+        }
         if port == "sel" {
             Some(false)
         } else if matches!(self.kind, Kind::ZeroExtend | Kind::SignExtend) {
@@ -206,7 +269,10 @@ impl Node {
         }
     }
 
-    pub fn inputs(&self) -> Vec<(&'static str, u8)> {
+    pub fn inputs(&self) -> Vec<(&str, u8)> {
+        if let NodeConfig::Module { inputs, .. } = &self.config {
+            return inputs.iter().map(|p| (p.name.as_str(), p.width)).collect();
+        }
         self.kind
             .input_names()
             .iter()
@@ -299,6 +365,11 @@ impl Document {
             + crate::encoded_size(&self.name)
             + self.nodes.encoded_len()
             + self.edges.encoded_len()
+            + if self.modules.is_empty() {
+                0
+            } else {
+                11 + crate::encoded_size(&self.modules)
+            }
     }
 
     pub fn demo() -> Self {
@@ -329,6 +400,7 @@ impl Document {
         for to in ["add", "bit_and", "bit_xor"] {
             for port in ["a", "b"] {
                 edges.push(Edge {
+                    source_port: "y".into(),
                     id: format!("{port}_{to}"),
                     from: port.into(),
                     to: to.into(),
@@ -343,6 +415,7 @@ impl Document {
             ("op", "sel"),
         ] {
             edges.push(Edge {
+                source_port: "y".into(),
                 id: format!("{from}_select"),
                 from: from.into(),
                 to: "select".into(),
@@ -350,12 +423,14 @@ impl Document {
             });
         }
         edges.push(Edge {
+            source_port: "y".into(),
             id: "select_result".into(),
             from: "select".into(),
             to: "result".into(),
             port: "a".into(),
         });
         Self {
+            modules: Default::default(),
             name: "ALU32".into(),
             nodes,
             edges: edges.into(),
@@ -373,6 +448,25 @@ impl Document {
         if self.nodes.len() > 2000 || self.edges.len() > 8000 {
             return Err("Design size limit exceeded".into());
         }
+        if self.modules.len() > 64 {
+            return Err("At most 64 module definitions".into());
+        }
+        for (name, def) in &self.modules {
+            if !valid_identifier(name) {
+                return Err("Invalid module definition name".into());
+            }
+            let (inputs, outputs) = def.ports();
+            if inputs.len() > 16 || outputs.is_empty() || outputs.len() > 16 {
+                return Err("Module interface exceeds 16 ports per side or has no output".into());
+            }
+            let definition = Document {
+                name: name.clone(),
+                nodes: def.nodes.clone(),
+                edges: def.edges.clone(),
+                modules: self.modules.clone(),
+            };
+            definition.flatten()?.validate(false)?;
+        }
         let mut ids = BTreeSet::new();
         let mut names = BTreeSet::new();
         for n in &self.nodes {
@@ -387,6 +481,24 @@ impl Document {
                 return Err("Width must be 1–64 bits".into());
             }
             match (&n.kind, &n.config) {
+                (
+                    Kind::Module,
+                    NodeConfig::Module {
+                        definition,
+                        inputs,
+                        outputs,
+                    },
+                ) => {
+                    let def = self
+                        .modules
+                        .get(definition)
+                        .ok_or("Unknown module definition")?;
+                    let (expected_in, expected_out) = def.ports();
+                    if *inputs != expected_in || *outputs != expected_out {
+                        return Err("Module interface does not match its definition".into());
+                    }
+                }
+                (Kind::Module, _) => return Err("Missing module definition".into()),
                 (Kind::Constant, NodeConfig::Constant { value }) => {
                     if value.len() > 20 || n.parse_value(value)? > mask(n.width) {
                         return Err(format!(
@@ -459,15 +571,16 @@ impl Document {
                 .find(|(p, _)| *p == e.port)
                 .map(|(_, w)| w)
                 .ok_or("Unknown destination port")?;
-            if source.width != width {
+            let (source_width, source_signed) = source.output(&e.source_port)?;
+            if source_width != width {
                 return Err(format!(
                     "Width mismatch: {} ({} bits) → {}.{} ({} bits)",
-                    source.name, source.width, target.name, e.port, width
+                    source.name, source_width, target.name, e.port, width
                 ));
             }
             if target
                 .input_signed(&e.port)
-                .is_some_and(|signed| signed != source.signed)
+                .is_some_and(|signed| signed != source_signed)
             {
                 return Err(format!(
                     "Signedness mismatch: {} → {}.{}; use an explicit extension/cast boundary",
@@ -478,7 +591,11 @@ impl Document {
                 return Err("An input can have only one driver".into());
             }
         }
-        self.order()?;
+        if self.nodes.iter().any(|n| n.kind == Kind::Module) {
+            self.flatten()?.validate(complete)?;
+        } else {
+            self.order()?;
+        }
         if complete {
             for n in &self.nodes {
                 for (port, _) in n.inputs() {
@@ -512,7 +629,7 @@ impl Document {
         let mut degree: BTreeMap<String, usize> =
             self.nodes.iter().map(|n| (n.id.clone(), 0)).collect();
         for e in &self.edges {
-            if self.node(&e.to)?.kind == Kind::Register {
+            if matches!(self.node(&e.to)?.kind, Kind::Register | Kind::Module) {
                 continue;
             }
             *degree.get_mut(&e.to).ok_or("Unknown target")? += 1;
@@ -525,7 +642,7 @@ impl Document {
         let mut order = vec![];
         while let Some(id) = ready.pop() {
             for e in self.edges.iter().filter(|e| e.from == id) {
-                if self.node(&e.to)?.kind == Kind::Register {
+                if matches!(self.node(&e.to)?.kind, Kind::Register | Kind::Module) {
                     continue;
                 }
                 let d = degree.get_mut(&e.to).unwrap();
@@ -546,11 +663,17 @@ impl Document {
         &self,
         inputs: &BTreeMap<String, u64>,
     ) -> Result<BTreeMap<String, u64>, String> {
+        if self.has_modules() {
+            return self.flatten()?.evaluate(inputs);
+        }
         self.require_combinational()?;
         self.validate(true)?;
         Ok(self.outputs(&self.evaluate_values(inputs, &BTreeMap::new(), &self.order()?)?))
     }
     pub fn require_combinational(&self) -> Result<(), String> {
+        if self.has_modules() {
+            return self.flatten()?.require_combinational();
+        }
         if self.nodes.iter().any(|node| node.kind == Kind::Register) {
             return Err("Sequential circuit requires cycle simulation".into());
         }
@@ -560,6 +683,9 @@ impl Document {
         &self,
         inputs: &BTreeMap<String, u64>,
     ) -> Result<BTreeMap<String, u64>, String> {
+        if self.has_modules() {
+            return self.flatten()?.evaluate_signals(inputs);
+        }
         self.require_combinational()?;
         self.validate(true)?;
         self.evaluate_values(inputs, &BTreeMap::new(), &self.order()?)
@@ -580,6 +706,7 @@ impl Document {
             let n = self.node(id)?;
             let get = |port: &str| values[drivers[&(id.as_str(), port)]];
             let value = match n.kind {
+                Kind::Module => return Err("Unelaborated module".into()),
                 Kind::Input => {
                     let value = *inputs
                         .get(&n.name)
@@ -618,6 +745,9 @@ impl Document {
                 Kind::Add => get("a").wrapping_add(get("b")),
                 Kind::Sub => get("a").wrapping_sub(get("b")),
                 Kind::And => get("a") & get("b"),
+                Kind::Nand => !(get("a") & get("b")),
+                Kind::Nor => !(get("a") | get("b")),
+                Kind::Xnor => !(get("a") ^ get("b")),
                 Kind::Or => get("a") | get("b"),
                 Kind::Xor => get("a") ^ get("b"),
                 Kind::Not => !get("a"),
@@ -639,6 +769,9 @@ impl Document {
             .collect()
     }
     pub fn simulate_cycles(&self, cycles: &[CycleInput]) -> Result<Vec<CycleSample>, String> {
+        if self.has_modules() {
+            return self.flatten()?.simulate_cycles(cycles);
+        }
         self.validate(true)?;
         if cycles.len().saturating_mul(self.nodes.len()) > 524_288 {
             return Err("Trace exceeds 524288 node samples; use fewer cycles".into());
@@ -691,6 +824,9 @@ impl Document {
         Ok(samples)
     }
     pub fn rtl(&self) -> Result<String, String> {
+        if self.has_modules() {
+            return self.hierarchical_rtl();
+        }
         self.validate(true)?;
         // Prefix every user identifier; this also prevents collisions with HDL keywords.
         let signal = |id: &str| format!("n_{}", self.node(id).unwrap().name);
@@ -795,6 +931,16 @@ impl Document {
                 },
                 Kind::Output => get("a"),
                 Kind::Not => format!("~{}", get("a")),
+                Kind::Nand | Kind::Nor | Kind::Xnor => format!(
+                    "~({} {} {})",
+                    get("a"),
+                    match n.kind {
+                        Kind::Nand => "&",
+                        Kind::Nor => "|",
+                        _ => "^",
+                    },
+                    get("b")
+                ),
                 Kind::Mux => format!(
                     "{} == 2'd0 ? {} : ({} == 2'd1 ? {} : {})",
                     get("sel"),

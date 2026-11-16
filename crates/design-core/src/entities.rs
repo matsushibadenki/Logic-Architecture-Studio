@@ -220,6 +220,7 @@ mod tests {
             })
             .collect();
         let mut doc = Document {
+            modules: Default::default(),
             name: "Large".into(),
             nodes,
             edges: Vec::new().into(),

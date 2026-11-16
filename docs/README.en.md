@@ -37,3 +37,11 @@ Node dragging snaps the grabbed node’s top-left to the visible dots (24 world 
 Open the separate Preferences window with the toolbar gear. The Appearance tab on the left contains language (English, Japanese, Simplified Chinese) and colors for each of the ten node kinds. Choose a color or enter `#RRGGBB`, then Apply. Individual/all-color reset and Discard changes are available.
 
 Preferences are saved in the current workspace and restored on restart. Colors update nodes, ports, outgoing wires, overview symbols, library and inspector without changing the circuit revision or Undo history.
+
+## Reusable modules
+
+Select processing nodes and use **Create module from selection**. Shift/⌘/Ctrl-click also works in the hierarchy list. For a custom HDL identifier, enter a module name in the library and use its adjacent group button. Boundary ports are inferred with their width and signedness; top-level Input/Output nodes stay outside.
+
+Click a module in the library to place an independent instance. Group instances together with other nodes to build nested modules. Inspect the recursive tree in the inspector, or use **Expand module into nodes** to edit one instance without changing its definition or other instances; regroup under a new name afterward. Undo/Redo and restart persistence include the library and nested structure.
+
+Simulation and Verilog generation elaborate the hierarchy; emitted HDL is currently flat. Limits: 64 definitions, 16 ports per side, 16 nesting levels, 2,000 expanded nodes / 8,000 edges. See [module semantics and QA](MODULES.md).

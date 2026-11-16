@@ -1,4 +1,5 @@
-import { nodeColor } from "../appearance";
+import { ModuleLibrary } from "./Modules";
+import { nodeColor, symbolFontSize } from "../appearance";
 import { memo, useState } from "react";
 import { Search, ChevronDown, Cpu, Plus } from "lucide-react";
 import { patch, select } from "../store";
@@ -22,9 +23,12 @@ const HierarchyRow = memo(function HierarchyRow({
   return (
     <button
       className={selected ? "selected" : ""}
-      onClick={() => void select(id)}
+      onClick={(e) => void select(id, e.shiftKey || e.metaKey || e.ctrlKey)}
     >
-      <span className="node-icon" style={{ color }}>
+      <span
+        className="node-icon"
+        style={{ color, fontSize: symbolFontSize(symbols[kind], 16, 12) }}
+      >
         {symbols[kind]}
       </span>
       <span>{name}</span>
@@ -68,7 +72,9 @@ export function Hierarchy({ snapshot }: { snapshot: Snapshot }) {
               kind={n.kind}
               width={n.width}
               color={nodeColor(snapshot, n.kind)}
-              selected={snapshot.selected === n.id}
+              selected={
+                snapshot.selection?.includes(n.id) ?? snapshot.selected === n.id
+              }
             />
           ))}
       </div>
@@ -83,6 +89,7 @@ export function Library({ snapshot }: { snapshot: Snapshot }) {
   const t = translation(snapshot.locale);
   return (
     <div className="library-list">
+      <ModuleLibrary snapshot={snapshot} />
       {kinds.map((kind) => (
         <button
           key={kind}
@@ -125,7 +132,10 @@ export function Library({ snapshot }: { snapshot: Snapshot }) {
         >
           <span
             className="library-symbol"
-            style={{ color: nodeColor(snapshot, kind) }}
+            style={{
+              color: nodeColor(snapshot, kind),
+              fontSize: symbolFontSize(symbols[kind], 30, 19),
+            }}
           >
             {symbols[kind]}
           </span>

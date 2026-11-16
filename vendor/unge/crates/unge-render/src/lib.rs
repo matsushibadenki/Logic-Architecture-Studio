@@ -1,5 +1,7 @@
 //! Rust-owned instanced renderer. The host supplies a texture or native surface.
 mod curves;
+mod gates;
+pub use gates::*;
 mod gpu;
 mod upload;
 pub use upload::*;

@@ -214,6 +214,9 @@ pub fn run_verilator(
     doc: &Document,
     vectors: &[TestVector],
 ) -> Result<Value, String> {
+    if doc.has_modules() {
+        return run_verilator(root, revision, &doc.flatten()?, vectors);
+    }
     run_engine_source(root, revision, doc, vectors, &doc.rtl()?, Engine::Verilator)
 }
 pub fn run(
@@ -222,6 +225,9 @@ pub fn run(
     doc: &Document,
     vectors: &[TestVector],
 ) -> Result<Value, String> {
+    if doc.has_modules() {
+        return run(root, revision, &doc.flatten()?, vectors);
+    }
     run_engine_source(root, revision, doc, vectors, &doc.rtl()?, Engine::Icarus)
 }
 #[cfg(test)]
@@ -937,6 +943,7 @@ mod tests {
                         &available[(next_sample(&mut state) as usize) % available.len()]
                     };
                     edges.push(design_core::Edge {
+                        source_port: "y".into(),
                         id: format!("edge_{}", edges.len()),
                         from: source.clone(),
                         to: node.id.clone(),
@@ -952,6 +959,7 @@ mod tests {
         // Reverse document order to exercise forward references and output ordering.
         nodes.reverse();
         let doc = Document {
+            modules: Default::default(),
             name: format!("seed_{seed:x}"),
             nodes: nodes.into(),
             edges: edges.into(),
@@ -1043,6 +1051,7 @@ mod tests {
         .into_iter()
         .enumerate()
         .map(|(index, (from, to, port))| design_core::Edge {
+            source_port: "y".into(),
             id: format!("edge_{index}"),
             from: from.into(),
             to: to.into(),
@@ -1050,6 +1059,7 @@ mod tests {
         })
         .collect::<Vec<_>>();
         let doc = Document {
+            modules: Default::default(),
             name: "accumulator".into(),
             nodes: nodes.into(),
             edges: edges.into(),

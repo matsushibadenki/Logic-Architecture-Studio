@@ -20,6 +20,8 @@ let state: State = {
 const listeners = new Set<() => void>();
 function update(next: Partial<State>) {
   state = { ...state, ...next };
+  if (next.snapshot)
+    document.documentElement.dataset.theme = next.snapshot.theme ?? "dark";
   listeners.forEach((fn) => fn());
 }
 export async function rpc<T = unknown>(
@@ -28,6 +30,9 @@ export async function rpc<T = unknown>(
 ): Promise<T> {
   if (
     [
+      "module.group",
+      "module.instantiate",
+      "module.explode",
       "design.apply_patch",
       "design.set_signed",
       "design.undo",
@@ -136,7 +141,15 @@ export function selectNodes(ids: string[]) {
     ids,
   });
 }
-export function select(id: string) {
+export function select(id: string, additive = false) {
+  if (additive && state.snapshot) {
+    const ids =
+      state.snapshot.selection ??
+      (state.snapshot.selected ? [state.snapshot.selected] : []);
+    return selectNodes(
+      ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id],
+    );
+  }
   return action("view.focus_module", { id });
 }
 export async function nativeAction(

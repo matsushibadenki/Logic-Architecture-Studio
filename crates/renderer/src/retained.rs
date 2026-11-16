@@ -6,6 +6,8 @@ use unge_render::{SceneChanges, SceneUpdate};
 pub struct RetainedProjection {
     source: Document,
     node_colors: BTreeMap<String, String>,
+    gate_symbols: bool,
+    hide_gate_frames: bool,
     editor: Editor,
     pub index: SceneIndex,
     pub labels: LabelCatalog,
@@ -18,11 +20,35 @@ impl RetainedProjection {
         Ok(Self {
             source: source.clone(),
             node_colors: BTreeMap::new(),
+            gate_symbols: false,
+            hide_gate_frames: false,
             editor: Editor::new(doc, 0).map_err(|e| e.to_string())?,
             index,
             labels,
             ids: Arc::new(ids),
         })
+    }
+    pub fn set_hide_gate_frames(&mut self, hidden: bool) {
+        if self.hide_gate_frames == hidden {
+            return;
+        }
+        self.hide_gate_frames = hidden;
+        for label in self.labels.values_mut() {
+            label.hide_frame = hidden;
+        }
+    }
+    pub fn set_gate_symbols(&mut self, enabled: bool) {
+        if self.gate_symbols == enabled {
+            return;
+        }
+        self.gate_symbols = enabled;
+        for node in &self.source.nodes {
+            if let Some(label) = self.labels.get_mut(&node.id) {
+                label.gate = enabled
+                    .then(|| unge_render::GateSymbol::from_key(node.kind.key()))
+                    .flatten();
+            }
+        }
     }
     pub fn set_node_colors(&mut self, colors: &BTreeMap<String, String>) {
         if &self.node_colors == colors {
@@ -152,6 +178,11 @@ impl RetainedProjection {
                     || v.signed != n.signed
             }) {
                 let mut label = node_labels(n);
+                label.hide_frame = self.hide_gate_frames;
+                label.gate = self
+                    .gate_symbols
+                    .then(|| unge_render::GateSymbol::from_key(n.kind.key()))
+                    .flatten();
                 label.color = self
                     .node_colors
                     .get(n.kind.key())

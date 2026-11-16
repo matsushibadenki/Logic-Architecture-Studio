@@ -1,3 +1,4 @@
+import { ModuleActions } from "./components/Modules";
 import { WorkspaceOpener } from "./components/WorkspaceOpener";
 import { ackFrame } from "./measurement";
 import { Splitter } from "./components/LayoutGesture";
@@ -169,7 +170,21 @@ export default function App() {
         <button onClick={() => void action("verify.run_tests")}>
           {t("run")}
         </button>
+        <ModuleActions snapshot={snapshot} />
         <span className="toolbar-spacer" />
+        <button
+          aria-label={t("gateDisplay")}
+          title={t("gateDisplay")}
+          aria-pressed={snapshot.gate_symbols ?? false}
+          className={snapshot.gate_symbols ? "active" : ""}
+          onClick={() =>
+            void action("view.preferences", {
+              gate_symbols: !snapshot.gate_symbols,
+            })
+          }
+        >
+          {t("gateDisplay")}
+        </button>
         {["library", "inspector", "results"].map((id) => (
           <button
             key={id}
@@ -348,6 +363,19 @@ export default function App() {
           ))}
         </div>
         <span className="toolbar-spacer" />
+        <button
+          aria-label={t("gateDisplay")}
+          title={t("gateDisplay")}
+          aria-pressed={snapshot.gate_symbols ?? false}
+          className={snapshot.gate_symbols ? "active" : ""}
+          onClick={() =>
+            void action("view.preferences", {
+              gate_symbols: !snapshot.gate_symbols,
+            })
+          }
+        >
+          {t("gateDisplay")}
+        </button>
         <div className="view-actions">
           <IconButton
             label={t("left")}

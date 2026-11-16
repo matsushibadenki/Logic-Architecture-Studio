@@ -1,5 +1,16 @@
 import type { Locale } from "./types";
 const en = {
+  modules: "Modules",
+  moduleKind: "Module",
+  moduleName: "Module name",
+  createModule: "Create module from selection",
+  expandModule: "Expand module into editable nodes",
+  instantiateModule: "Place module",
+  moduleHint:
+    "Create reusable modules from processing nodes. Top-level inputs/outputs stay outside. Modules can contain other modules. Expand an instance to edit it; existing definitions and other instances stay unchanged.",
+
+  routingBlocked:
+    "No clear route. Move overlapping nodes or leave more space near ports.",
   stimuli: "Stimulus table",
   manualInputs: "Manual",
   addCycle: "Add cycle",
@@ -35,6 +46,13 @@ const en = {
 
   preferences: "Preferences",
   appearance: "Appearance",
+  colorMode: "Color mode",
+  darkMode: "Dark",
+  lightMode: "Light",
+  nodeDisplay: "Node display",
+  blockDisplay: "Blocks",
+  gateDisplay: "Gate symbols",
+  gateFrames: "Show gate frames",
   nodeColors: "Node colors",
   restoreColors: "Reset colors",
   restoreColor: "Reset color",
@@ -219,6 +237,17 @@ const en = {
 };
 type Dictionary = typeof en;
 const ja: Dictionary = {
+  modules: "モジュール",
+  moduleKind: "モジュール",
+  moduleName: "モジュール名",
+  createModule: "選択範囲をモジュール化",
+  expandModule: "モジュールをノードへ展開",
+  instantiateModule: "モジュールを配置",
+  moduleHint:
+    "演算ノードの選択範囲から再利用できるモジュールを作成します。トップレベルの入出力は外側に保持します。モジュールを含めて再度まとめると入れ子にできます。編集はインスタンスを展開して行います。既存の定義や他の配置には影響しません。",
+
+  routingBlocked:
+    "経路を確保できません。重なったノードを移動するか、ポート周辺の間隔を広げてください。",
   stimuli: "入力表",
   manualInputs: "手動",
   addCycle: "サイクルを追加",
@@ -254,6 +283,13 @@ const ja: Dictionary = {
 
   preferences: "環境設定",
   appearance: "アピアランス",
+  colorMode: "カラーモード",
+  darkMode: "ダーク",
+  lightMode: "ライト",
+  nodeDisplay: "ノード表示",
+  blockDisplay: "ブロック",
+  gateDisplay: "ゲート記号",
+  gateFrames: "ゲートの外枠を表示",
   nodeColors: "ノード種別カラー",
   restoreColors: "既定色に戻す",
   restoreColor: "この色をリセット",
@@ -437,6 +473,16 @@ const ja: Dictionary = {
     "外部MCPも同じワークスペースに接続します。既定では読み取り専用です。",
 };
 const zh: Dictionary = {
+  modules: "模块",
+  moduleKind: "模块",
+  moduleName: "模块名称",
+  createModule: "将所选节点创建为模块",
+  expandModule: "将模块展开为可编辑节点",
+  instantiateModule: "放置模块",
+  moduleHint:
+    "将处理节点创建为可复用模块，顶层输入和输出保持在外部。模块可以包含其他模块。展开实例后可编辑，现有定义和其他实例不会改变。",
+
+  routingBlocked: "无法找到畅通路径。请移动重叠的节点或增大端口附近的间距。",
   stimuli: "激励表",
   manualInputs: "手动",
   addCycle: "添加周期",
@@ -470,6 +516,13 @@ const zh: Dictionary = {
 
   preferences: "偏好设置",
   appearance: "外观",
+  colorMode: "颜色模式",
+  darkMode: "深色",
+  lightMode: "浅色",
+  nodeDisplay: "节点显示",
+  blockDisplay: "方框",
+  gateDisplay: "逻辑门符号",
+  gateFrames: "显示逻辑门外框",
   nodeColors: "节点类型颜色",
   restoreColors: "恢复默认颜色",
   restoreColor: "重置此颜色",

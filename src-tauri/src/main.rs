@@ -25,7 +25,7 @@ async fn command(
 ) -> Result<Value, String> {
     let notify = !matches!(
         method.as_str(),
-        "project.sync" | "project.inspect" | "design.get_ir" | "simulation.state"
+        "project.sync" | "project.inspect" | "design.get_ir" | "simulation.state" | "view.routes"
     );
     if method == "project.sync"
         && args["scope"] == "web"

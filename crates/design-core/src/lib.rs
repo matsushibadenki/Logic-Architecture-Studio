@@ -1,8 +1,9 @@
 mod preferences;
 pub mod testbench;
-pub use preferences::{default_node_colors, parse_node_color};
+pub use preferences::{default_node_colors, parse_node_color, AppearanceTheme};
 pub mod entities;
 pub mod model;
+pub mod modules;
 pub mod protocol;
 pub use model::*;
 use serde::{Deserialize, Serialize};
@@ -117,6 +118,12 @@ pub struct Workspace {
     pub locale: String,
     #[serde(default = "default_node_colors")]
     pub node_colors: BTreeMap<String, String>,
+    #[serde(default)]
+    pub gate_symbols: bool,
+    #[serde(default)]
+    pub hide_gate_frames: bool,
+    #[serde(default)]
+    pub theme: AppearanceTheme,
     pub panels: BTreeMap<String, String>,
     #[serde(default)]
     pub testbench: Arc<testbench::Testbench>,
@@ -138,6 +145,9 @@ impl Default for Workspace {
             selection: vec!["add".into()],
             locale: "ja".into(),
             node_colors: default_node_colors(),
+            gate_symbols: false,
+            hide_gate_frames: false,
+            theme: AppearanceTheme::Dark,
             history_cache: HistoryCache::default(),
             testbench: Arc::default(),
             panels: BTreeMap::new(),
@@ -265,7 +275,7 @@ impl Workspace {
         }
     }
     pub fn snapshot(&self) -> Value {
-        json!({"document":self.document,"revision":self.revision,"history":self.history,"can_undo":!self.undo.is_empty(),"can_redo":!self.redo.is_empty(),"report":self.report,"experiments":self.experiments,"selected":self.selected,"selection":self.selected_nodes(),"locale":self.locale,"node_colors":self.node_colors,"testbench":self.testbench,"panels":self.panels,"diagnostics":self.document.diagnostics()})
+        json!({"document":self.document,"revision":self.revision,"history":self.history,"can_undo":!self.undo.is_empty(),"can_redo":!self.redo.is_empty(),"report":self.report,"experiments":self.experiments,"selected":self.selected,"selection":self.selected_nodes(),"locale":self.locale,"gate_symbols":self.gate_symbols,"hide_gate_frames":self.hide_gate_frames,"theme":self.theme,"node_colors":self.node_colors,"testbench":self.testbench,"panels":self.panels,"diagnostics":self.document.diagnostics()})
     }
     fn check_revision(&self, r: u64) -> Result<(), String> {
         if r != self.revision {
@@ -377,6 +387,35 @@ impl Workspace {
         compact: bool,
     ) -> Result<Value, String> {
         match method {
+            "module.group" => {
+                self.check_revision(revision(&args)?)?;
+                let ids: Vec<String> = parse(args["ids"].clone())?;
+                let (doc, id) = self.document.group_module(&ids, field(&args, "name")?)?;
+                self.commit(doc, "Create module".into(), actor);
+                self.selected = Some(id.clone());
+                self.selection = vec![id];
+                Ok(self.reply(compact))
+            }
+            "module.explode" => {
+                self.check_revision(revision(&args)?)?;
+                let (doc, ids) = self.document.explode_module(field(&args, "id")?)?;
+                self.commit(doc, "Expand module".into(), actor);
+                self.selected = ids.first().cloned();
+                self.selection = ids;
+                Ok(self.reply(compact))
+            }
+            "module.instantiate" => {
+                self.check_revision(revision(&args)?)?;
+                let x = args["x"].as_f64().ok_or("Missing x")? as f32;
+                let y = args["y"].as_f64().ok_or("Missing y")? as f32;
+                let (doc, id) = self
+                    .document
+                    .instantiate_module(field(&args, "name")?, x, y)?;
+                self.commit(doc, "Instantiate module".into(), actor);
+                self.selected = Some(id.clone());
+                self.selection = vec![id];
+                Ok(self.reply(compact))
+            }
             "project.inspect" | "design.get_ir" => Ok(self.snapshot()),
             "project.export" => Ok(json!({"schema":1,"document":self.document})),
             "project.import" => {
@@ -448,7 +487,9 @@ impl Workspace {
                         .iter()
                         .filter(|e| {
                             e.to == id
-                                && doc.node(&id).is_ok_and(|node| node.kind != Kind::Register)
+                                && doc.node(&id).is_ok_and(|node| {
+                                    !matches!(node.kind, Kind::Register | Kind::Module)
+                                })
                         })
                         .map(|e| levels[&e.from] + 1)
                         .max()
@@ -458,7 +499,7 @@ impl Workspace {
                     let n = doc.nodes.iter_mut().find(|n| n.id == id).unwrap();
                     n.x = 40. + level as f32 * (NODE_WIDTH + 72.);
                     n.y = *y;
-                    *y += node_height(&n.kind) + 32.;
+                    *y += n.height() + 32.;
                 }
                 self.commit(doc, "layout.auto_arrange".into(), actor);
                 Ok(self.reply(compact))
@@ -512,6 +553,16 @@ impl Workspace {
                 } else {
                     None
                 };
+                let theme: Option<AppearanceTheme> =
+                    args.get("theme").map(|v| parse(v.clone())).transpose()?;
+                let hide_gate_frames = args
+                    .get("hide_gate_frames")
+                    .map(|v| v.as_bool().ok_or("Invalid hide_gate_frames"))
+                    .transpose()?;
+                let gate_symbols = args
+                    .get("gate_symbols")
+                    .map(|v| v.as_bool().ok_or("Invalid gate_symbols"))
+                    .transpose()?;
                 let reset = args
                     .get("reset_colors")
                     .map(|v| v.as_bool().ok_or("Invalid reset_colors"))
@@ -544,6 +595,15 @@ impl Workspace {
                     self.panels.insert(panel.into(), position.into());
                 }
                 self.node_colors = colors;
+                if let Some(hidden) = hide_gate_frames {
+                    self.hide_gate_frames = hidden;
+                }
+                if let Some(theme) = theme {
+                    self.theme = theme;
+                }
+                if let Some(value) = gate_symbols {
+                    self.gate_symbols = value;
+                }
                 Ok(self.reply(compact))
             }
             "testbench.set" | "testbench.import_csv" => {

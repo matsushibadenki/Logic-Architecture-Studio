@@ -75,6 +75,7 @@ fn every_concat_split_and_slice_boundary_is_exact_through_64_bits() {
         .retain(|n| n.id == "literal" || n.id == "upper" || n.id == "result");
     doc.nodes.update("result", |n| n.width = 64).unwrap();
     doc.edges.push(Edge {
+        source_port: "y".into(),
         id: "out".into(),
         from: "upper".into(),
         to: "result".into(),
@@ -181,6 +182,7 @@ fn bit_nodes_feed_clocked_simulation() {
         })
         .unwrap();
     doc.edges.push(Edge {
+        source_port: "y".into(),
         id: "out".into(),
         from: "delay".into(),
         to: "result".into(),

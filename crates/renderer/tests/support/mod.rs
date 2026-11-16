@@ -15,6 +15,7 @@ pub fn circuit(count: usize) -> Document {
     let edges = (2..count)
         .flat_map(|i| {
             [("a", i - 1), ("b", i - 2)].map(move |(p, from)| Edge {
+                source_port: "y".into(),
                 id: format!("e{i}_{p}"),
                 from: format!("n{from}"),
                 to: format!("n{i}"),
@@ -23,6 +24,7 @@ pub fn circuit(count: usize) -> Document {
         })
         .collect();
     Document {
+        modules: Default::default(),
         name: format!("Large_{count}"),
         nodes,
         edges,

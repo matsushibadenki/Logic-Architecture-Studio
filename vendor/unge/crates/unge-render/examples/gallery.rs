@@ -85,6 +85,7 @@ fn fixture() -> (Document, LabelCatalog) {
                 ]
                 .into(),
                 outputs: [("result".into(), text("Result", "出力", "输出"))].into(),
+                ..Default::default()
             },
         );
         editor

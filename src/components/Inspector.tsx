@@ -1,11 +1,13 @@
+import { ModuleTree, ModuleActions } from "./Modules";
 import type { CSSProperties } from "react";
-import { nodeColor } from "../appearance";
+import { nodeColor, symbolFontSize } from "../appearance";
 import { Trash2, Unplug, Box } from "lucide-react";
 import { patch, action } from "../store";
 import {
   defaultConfig,
   inputSigned,
   ports,
+  outputs,
   kinds,
   symbols,
   type Kind,
@@ -34,11 +36,18 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
       key={`${node.id}-${node.name}-${node.kind}-${node.width}-${node.signed}-${JSON.stringify(node.config)}`}
     >
       <div className="node-heading">
-        <span className="large-symbol">{symbols[node.kind]}</span>
+        <span
+          className="large-symbol"
+          style={{ fontSize: symbolFontSize(symbols[node.kind], 26, 22) }}
+        >
+          {symbols[node.kind]}
+        </span>
         <div>
           <strong>{node.name}</strong>
           <small>
-            {node.kind.toUpperCase()} · {node.width} bit
+            {node.config?.type === "module"
+              ? node.config.definition
+              : `${node.kind.toUpperCase()} · ${node.width} bit`}
           </small>
         </div>
         <IconButton
@@ -52,40 +61,50 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
           }
         />
       </div>
-      <div className="numeric-semantics">
-        <strong>{t(node.signed ? "signedType" : "numericSemantics")}</strong>
-        <Hint
-          text={t(
-            ["zero_extend", "sign_extend"].includes(node.kind)
-              ? "extensionHint"
-              : "simulationSemantics",
-          )}
-        />
-        {["add", "sub"].includes(node.kind) && (
-          <small>{t("wrapSemantics")}</small>
-        )}
-        {node.kind === "register" && <small>{t("resetSemantics")}</small>}
-      </div>
+      {node.kind !== "module" && (
+        <>
+          <div className="numeric-semantics">
+            <strong>
+              {t(node.signed ? "signedType" : "numericSemantics")}
+            </strong>
+            <Hint
+              text={t(
+                ["zero_extend", "sign_extend"].includes(node.kind)
+                  ? "extensionHint"
+                  : "simulationSemantics",
+              )}
+            />
+            {["add", "sub"].includes(node.kind) && (
+              <small>{t("wrapSemantics")}</small>
+            )}
+            {node.kind === "register" && <small>{t("resetSemantics")}</small>}
+          </div>
+        </>
+      )}
       <div className="fields">
-        <label>
-          <span>
-            {t("signalType")} <Hint text={t("propagateSignedHint")} />
-          </span>
-          <select
-            aria-label={t("signalType")}
-            value={node.signed ? "signed" : "unsigned"}
-            onChange={(e) =>
-              void action("design.set_signed", {
-                id: node.id,
-                signed: e.target.value === "signed",
-                expected_revision: snapshot.revision,
-              })
-            }
-          >
-            <option value="unsigned">{t("unsignedType")}</option>
-            <option value="signed">{t("signedType")}</option>
-          </select>
-        </label>
+        {node.kind !== "module" && (
+          <>
+            <label>
+              <span>
+                {t("signalType")} <Hint text={t("propagateSignedHint")} />
+              </span>
+              <select
+                aria-label={t("signalType")}
+                value={node.signed ? "signed" : "unsigned"}
+                onChange={(e) =>
+                  void action("design.set_signed", {
+                    id: node.id,
+                    signed: e.target.value === "signed",
+                    expected_revision: snapshot.revision,
+                  })
+                }
+              >
+                <option value="unsigned">{t("unsignedType")}</option>
+                <option value="signed">{t("signedType")}</option>
+              </select>
+            </label>
+          </>
+        )}
         <label>
           {t("name")}
           <input
@@ -109,6 +128,7 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
         <label>
           {t("kind")}
           <select
+            disabled={node.kind === "module"}
             aria-label={t("kind")}
             value={node.kind}
             onChange={(e) =>
@@ -134,6 +154,9 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
               )
             }
           >
+            {node.kind === "module" && (
+              <option value="module">{t("moduleKind")}</option>
+            )}
             {kinds.map((k) => (
               <option key={k} value={k}>
                 {[
@@ -150,94 +173,113 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
             ))}
           </select>
         </label>
-        <label>
-          {t("width")}
-          <div className="unit-input">
-            <input
-              aria-label={t("width")}
-              type="number"
-              min={1}
-              max={64}
-              readOnly={node.kind === "concat"}
-              defaultValue={node.width}
-              onBlur={async (e) => {
-                const input = e.currentTarget;
-                const width = Number(input.value);
-                if (width !== node.width) {
-                  const result = await patch(
-                    [{ op: "update_node", id: node.id, width }],
-                    `Resize ${node.name}`,
-                  );
-                  if (!result) input.value = String(node.width);
-                }
-              }}
-            />
-            <span>bit</span>
-          </div>
-        </label>
-      </div>
-      {node.config && node.config.type !== "none" && (
-        <div className="fields node-config-fields">
-          <Hint
-            text={t(
-              ["zero_extend", "sign_extend"].includes(node.kind)
-                ? "extensionHint"
-                : "bitNodeHint",
-            )}
-          />
-          {Object.entries(node.config)
-            .filter(([key]) => key !== "type")
-            .map(([key, value]) => {
-              const label = t(
-                (
-                  {
-                    value: "constantValue",
-                    input_width: "inputWidth",
-                    lsb: "sliceLsb",
-                    high_width: "highWidth",
-                    low_width: "lowWidth",
-                  } as const
-                )[key as "value"],
-              );
-              return (
-                <label key={key}>
-                  {label}
-                  <input
-                    aria-label={label}
-                    type={key === "value" ? "text" : "number"}
-                    min={key === "lsb" ? 0 : 1}
-                    max={key === "lsb" ? 63 : 64}
-                    maxLength={20}
-                    defaultValue={value}
-                    spellCheck={false}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") e.currentTarget.blur();
-                    }}
-                    onBlur={async (e) => {
-                      const input = e.currentTarget;
-                      const next =
-                        key === "value" ? input.value : Number(input.value);
-                      if (next === value) return;
-                      const config = {
-                        ...node.config,
-                        [key]: next,
-                      } as NodeConfig;
-                      const width =
-                        config.type === "concat"
-                          ? config.high_width + config.low_width
-                          : node.width;
+        {node.kind !== "module" && (
+          <>
+            <label>
+              {t("width")}
+              <div className="unit-input">
+                <input
+                  aria-label={t("width")}
+                  type="number"
+                  min={1}
+                  max={64}
+                  readOnly={node.kind === "concat"}
+                  defaultValue={node.width}
+                  onBlur={async (e) => {
+                    const input = e.currentTarget;
+                    const width = Number(input.value);
+                    if (width !== node.width) {
                       const result = await patch(
-                        [{ op: "update_node", id: node.id, config, width }],
-                        `Configure ${node.name}`,
+                        [{ op: "update_node", id: node.id, width }],
+                        `Resize ${node.name}`,
                       );
-                      if (!result) input.value = String(value);
-                    }}
-                  />
-                </label>
-              );
-            })}
-        </div>
+                      if (!result) input.value = String(node.width);
+                    }
+                  }}
+                />
+                <span>bit</span>
+              </div>
+            </label>
+          </>
+        )}
+      </div>
+      {node.config?.type === "module" && (
+        <section className="inspector-section">
+          <div className="section-title">
+            <strong>{node.config.definition}</strong>
+            <ModuleActions snapshot={snapshot} />
+          </div>
+          <Hint text={t("moduleHint")} />
+          <ModuleTree
+            name={node.config.definition}
+            library={snapshot.document.modules ?? {}}
+          />
+        </section>
       )}
+      {node.config &&
+        node.config.type !== "none" &&
+        node.config.type !== "module" && (
+          <div className="fields node-config-fields">
+            <Hint
+              text={t(
+                ["zero_extend", "sign_extend"].includes(node.kind)
+                  ? "extensionHint"
+                  : "bitNodeHint",
+              )}
+            />
+            {Object.entries(node.config)
+              .filter(([key]) => key !== "type")
+              .map(([key, value]) => {
+                const label = t(
+                  (
+                    {
+                      value: "constantValue",
+                      input_width: "inputWidth",
+                      lsb: "sliceLsb",
+                      high_width: "highWidth",
+                      low_width: "lowWidth",
+                    } as const
+                  )[key as "value"],
+                );
+                return (
+                  <label key={key}>
+                    {label}
+                    <input
+                      aria-label={label}
+                      type={key === "value" ? "text" : "number"}
+                      min={key === "lsb" ? 0 : 1}
+                      max={key === "lsb" ? 63 : 64}
+                      maxLength={20}
+                      defaultValue={value}
+                      spellCheck={false}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") e.currentTarget.blur();
+                      }}
+                      onBlur={async (e) => {
+                        const input = e.currentTarget;
+                        const next =
+                          key === "value" ? input.value : Number(input.value);
+                        if (next === value) return;
+                        const config = {
+                          ...node.config,
+                          [key]: next,
+                        } as NodeConfig;
+                        const width =
+                          config.type === "concat"
+                            ? config.high_width + config.low_width
+                            : node.width;
+                        const result = await patch(
+                          [{ op: "update_node", id: node.id, config, width }],
+                          `Configure ${node.name}`,
+                        );
+                        if (!result) input.value = String(value);
+                      }}
+                    />
+                  </label>
+                );
+              })}
+          </div>
+        )}
       <div className="inspector-section">
         <h3>{t("ports")}</h3>
         <div className="table-label">
@@ -277,14 +319,19 @@ export function Inspector({ snapshot }: { snapshot: Snapshot }) {
         {node.kind !== "output" ? (
           <>
             <div className="table-label">
-              {t("outputs")} <span>1</span>
+              {t("outputs")} <span>{outputs(node).length}</span>
             </div>
             <div className="port-table">
-              <div>
-                <span className="port-dot connected" />
-                <code>y{node.signed ? " · s" : ""}</code>
-                <span>{node.width}</span>
-              </div>
+              {outputs(node).map(([port, width, signed]) => (
+                <div key={port}>
+                  <span className="port-dot connected" />
+                  <code>
+                    {port}
+                    {signed ? " · s" : ""}
+                  </code>
+                  <span>{width}</span>
+                </div>
+              ))}
             </div>
           </>
         ) : null}

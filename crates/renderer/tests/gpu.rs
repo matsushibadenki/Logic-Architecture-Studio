@@ -299,6 +299,7 @@ fn wires_and_ports_survive_zoom_boundaries_and_subpixel_panning() {
                     });
                 }
                 source.edges.push(design_core::Edge {
+                    source_port: "y".into(),
                     id: "link0".into(),
                     from: "in0".into(),
                     to: "out0".into(),
