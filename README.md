@@ -1,6 +1,6 @@
 # Logic Architecture Studio
 
-<img src="docs/images/Logic-Architecture-Studio-image.png" width="100%">
+<img src="docs/images/Logic-Architecture-Studio-image.png" alt="Logic Architecture Studioの回路編集画面と、信号・サイクルで絞り込んだアサーション結果" width="100%">
 
 Tauri 2 + Rustで実装した、回路編集とMCP操作を同じ設計コアで扱うEDAワークベンチの初期実装です。UNGEのノード表現とネイティブGPUレンダラーを取り込んでいます。
 
@@ -56,6 +56,12 @@ npm run dev
 デモALUの仕様は `op=0: a+b`、`op=1: a&b`、`op=2/3: a^b`、結果はビット幅で切り詰めます。仕様を変える回路にはMCP/APIから明示的なテストベクトルを渡してください。組込み検証は形式証明やRTLシミュレーターとの等価性証明ではありません。
 
 設計変更後の検証結果には「更新が必要」と表示します。面積・遅延・電力は未計測のため埋めません。
+
+## 刺激表の比較アサーション
+
+期待値欄には数値のほか、`eq in.data`（同じサイクルの入力と一致）、`eq prev.out.result`（前サイクルの出力と一致）、`lt 0`（0未満）を入力できます。演算子は `eq`（等しい）、`ne`（異なる）、`lt`、`le`、`gt`、`ge` です。信号同士の比較には同じ幅と符号型が必要です。最初のサイクルでは `prev.` を使えません。空欄はチェックを省略します。
+
+式はCSVにも保存されます。Rust・Icarus・Verilatorはそれぞれの実行結果に対して同じ比較を行います。失敗行には比較相手の実際の値が表示され、クリックで該当サイクルへ移動できます。
 
 ## 再利用モジュール
 

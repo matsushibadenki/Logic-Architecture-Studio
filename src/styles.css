@@ -2676,3 +2676,34 @@ html.toolbar-document,
   margin-left: auto;
   color: var(--color-muted);
 }
+
+.failure-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-block: 5px;
+}
+
+.failure-filters label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.failure-filters select {
+  min-width: 0;
+  max-width: 16ch;
+}
+
+.wave-row-highlight > strong {
+  background: var(--color-elevated);
+  color: var(--color-accent);
+  box-shadow: inset 3px 0 var(--color-accent);
+}
+
+.wave-row-highlight .wave-cursor {
+  stroke: var(--color-accent);
+  stroke-width: 2;
+}

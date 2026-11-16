@@ -38,6 +38,73 @@ fn signals(doc: &Document, kind: Kind) -> BTreeMap<String, &Node> {
         .map(|n| (n.name.clone(), n))
         .collect()
 }
+// Parse only a fixed comparison grammar; expressions never reach an HDL
+// compiler or a spreadsheet formula evaluator.
+type Signals<'a> = BTreeMap<String, &'a Node>;
+enum Operand<'a> {
+    Literal(u64),
+    Signal { node: &'a Node, previous: bool },
+}
+struct Expectation<'a> {
+    operator: &'a str,
+    operand: Operand<'a>,
+}
+fn expectation<'a>(
+    text: &'a str,
+    target: &Node,
+    inputs: &Signals<'a>,
+    outputs: &Signals<'a>,
+    cycle: usize,
+) -> Result<Expectation<'a>, String> {
+    if text.len() > 160 || !text.is_ascii() || text.bytes().any(|b| b.is_ascii_control()) {
+        return Err(
+            "Expected value exceeds 160 characters or contains unsupported characters".into(),
+        );
+    }
+    let fields: Vec<_> = text.split_ascii_whitespace().collect();
+    let (operator, rhs) = match fields.as_slice() {
+        [literal] => {
+            return Ok(Expectation {
+                operator: "eq",
+                operand: Operand::Literal(target.parse_value(literal)?),
+            })
+        }
+        [op @ ("eq" | "ne" | "lt" | "le" | "gt" | "ge"), rhs] => (*op, *rhs),
+        _ => return Err("Use a value or eq/ne/lt/le/gt/ge followed by a value or signal".into()),
+    };
+    let (previous, rhs) = rhs
+        .strip_prefix("prev.")
+        .map_or((false, rhs), |s| (true, s));
+    let operand = if let Some(node) = rhs
+        .strip_prefix("in.")
+        .map(|n| inputs.get(n))
+        .or_else(|| rhs.strip_prefix("out.").map(|n| outputs.get(n)))
+    {
+        let node = *node.ok_or("Unknown assertion signal")?;
+        if previous && cycle == 0 {
+            return Err("Cycle 1 has no previous sample".into());
+        }
+        if !previous && node.id == target.id {
+            return Err("An output cannot be compared with itself in the same cycle".into());
+        }
+        if node.width != target.width || node.signed != target.signed {
+            return Err("Assertion signals must have the same width and signedness".into());
+        }
+        Operand::Signal { node, previous }
+    } else if previous {
+        return Err("prev. must precede an input or output signal".into());
+    } else {
+        Operand::Literal(target.parse_value(rhs)?)
+    };
+    Ok(Expectation { operator, operand })
+}
+fn ordered(value: u64, node: &Node) -> i128 {
+    if node.signed {
+        crate::signed_value(value, node.width)
+    } else {
+        i128::from(value)
+    }
+}
 impl Testbench {
     pub fn validate_rows(doc: &Document, rows: &[Stimulus]) -> Result<(), String> {
         if rows.is_empty() || rows.len() > 256 {
@@ -67,8 +134,7 @@ impl Testbench {
                 let width = outputs
                     .get(name)
                     .ok_or_else(|| format!("Cycle {}: unknown output {name}", i + 1))?;
-                width
-                    .parse_value(text)
+                expectation(text, width, &inputs, &outputs, i)
                     .map_err(|e| format!("Cycle {}, expected {name}: {e}", i + 1))?;
             }
         }
@@ -117,29 +183,70 @@ impl Testbench {
                 })
                 .collect::<Result<Vec<_>, String>>()?
         };
+        let report = self.check_samples(doc, &samples)?;
+        Ok((cycles, samples, report))
+    }
+
+    /// Evaluate expectations against the samples of the selected engine.
+    pub fn check_samples(
+        &self,
+        doc: &Document,
+        samples: &[CycleSample],
+    ) -> Result<CheckReport, String> {
+        if samples.len() != self.rows.len() {
+            return Err("Sample count does not match stimulus table".into());
+        }
+        let inputs = signals(doc, Kind::Input);
+        let outputs = signals(doc, Kind::Output);
         let mut report = CheckReport {
             total: 0,
             passed: 0,
             failures: vec![],
         };
-        for (i, (row, sample)) in self.rows.iter().zip(&samples).enumerate() {
-            for (name, expected) in &row.expected {
+        for (cycle, row) in self.rows.iter().enumerate() {
+            for (name, text) in &row.expected {
+                let target = outputs.get(name).ok_or("Unknown assertion output")?;
+                let parsed = expectation(text, target, &inputs, &outputs, cycle)?;
+                let rhs = match parsed.operand {
+                    Operand::Literal(value) => value,
+                    Operand::Signal { node, previous } => *samples[cycle - usize::from(previous)]
+                        .values
+                        .get(&node.id)
+                        .ok_or("Missing assertion operand sample")?,
+                };
+                let lhs = *samples[cycle]
+                    .values
+                    .get(&target.id)
+                    .ok_or("Missing assertion output sample")?;
+                let (a, b) = (ordered(lhs, target), ordered(rhs, target));
+                let passed = match parsed.operator {
+                    "eq" => a == b,
+                    "ne" => a != b,
+                    "lt" => a < b,
+                    "le" => a <= b,
+                    "gt" => a > b,
+                    "ge" => a >= b,
+                    _ => unreachable!(),
+                };
                 report.total += 1;
-                let actual = &sample.outputs[name];
-                let node = signals(doc, Kind::Output)[name];
-                if node.parse_value(expected)? == node.parse_value(actual)? {
+                if passed {
                     report.passed += 1;
                 } else {
+                    let expected = if text.split_ascii_whitespace().count() == 1 {
+                        text.clone()
+                    } else {
+                        format!("{text} ({})", target.decimal(rhs))
+                    };
                     report.failures.push(CheckFailure {
-                        cycle: i,
+                        cycle,
                         signal: name.clone(),
-                        expected: expected.clone(),
-                        actual: actual.clone(),
+                        expected,
+                        actual: target.decimal(lhs),
                     });
                 }
             }
         }
-        Ok((cycles, samples, report))
+        Ok(report)
     }
     pub fn import_csv(doc: &Document, source: &str) -> Result<Vec<Stimulus>, String> {
         if source.len() > MAX_CSV_BYTES {
@@ -229,7 +336,7 @@ impl Testbench {
     }
 }
 // Strict CSV quoting, including CRLF, escaped quotes and quoted records. Values
-// are subsequently validated as numbers; no spreadsheet formulas are accepted.
+// are subsequently validated as numbers or fixed-grammar comparisons.
 fn csv_records(source: &str) -> Result<Vec<Vec<String>>, String> {
     let mut records = vec![];
     let mut row = vec![];
@@ -294,6 +401,68 @@ mod tests {
             {"id":"result","name":"result","kind":"output","width":3,"x":1200,"y":0}],
             "edges":[{"id":"e0","from":"inc","to":"sum","port":"a"},{"id":"e1","from":"acc","to":"sum","port":"b"},{"id":"e2","from":"sum","to":"acc","port":"d"},{"id":"e3","from":"acc","to":"result","port":"a"}]})).unwrap()
     }
+    #[test]
+    fn assertions_use_engine_samples_and_round_trip_through_csv() {
+        let doc = accumulator();
+        let csv = "reset,in.inc,expect.result\n1,3,lt 1\n0,3,eq in.inc\n0,3,le prev.out.result\n0,3,ne prev.in.inc\n";
+        let rows = Testbench::import_csv(&doc, csv).unwrap();
+        let table = Testbench { version: 1, rows };
+        let (_, samples, report) = table.run(&doc).unwrap();
+        assert_eq!((report.total, report.passed), (4, 3));
+        let failure = &report.failures[0];
+        assert_eq!(failure.cycle, 2);
+        assert_eq!(failure.actual, "6");
+        assert_eq!(failure.expected, "le prev.out.result (3)");
+        assert_eq!(
+            Testbench::import_csv(&doc, &table.export_csv(&doc).unwrap()).unwrap(),
+            table.rows
+        );
+        let mut other_engine = samples;
+        other_engine[1].values.insert("result".into(), 7);
+        let updated = table.check_samples(&doc, &other_engine).unwrap();
+        assert_eq!(updated.failures[0].cycle, 1);
+        assert_eq!(updated.failures[0].actual, "7");
+    }
+
+    #[test]
+    fn report_retains_failures_after_the_hundredth() {
+        let doc = accumulator();
+        let rows = (0..128)
+            .map(|_| Stimulus {
+                reset: true,
+                inputs: BTreeMap::from([("inc".into(), "0".into())]),
+                expected: BTreeMap::from([("result".into(), "1".into())]),
+            })
+            .collect();
+        let (_, _, report) = Testbench { version: 1, rows }.run(&doc).unwrap();
+        assert_eq!(
+            (report.total, report.passed, report.failures.len()),
+            (128, 0, 128)
+        );
+        assert_eq!(report.failures.last().unwrap().cycle, 127);
+    }
+
+    #[test]
+    fn rejects_invalid_assertion_references_and_syntax() {
+        let doc = accumulator();
+        for expression in [
+            "eq prev.out.result",
+            "eq out.result",
+            "eq in.unknown",
+            "=1+2",
+            "eq 8",
+            "eq in.inc extra",
+        ] {
+            let csv = format!("reset,in.inc,expect.result\n1,3,{expression}\n");
+            assert!(Testbench::import_csv(&doc, &csv).is_err(), "{expression}");
+        }
+        let mut mixed = doc;
+        mixed.nodes.update("inc", |n| n.signed = true).unwrap();
+        assert!(
+            Testbench::import_csv(&mixed, "reset,in.inc,expect.result\n1,3,eq in.inc\n").is_err()
+        );
+    }
+
     #[test]
     fn csv_round_trip_handles_bom_quotes_crlf_blank_expectations_and_reset() {
         let doc = accumulator();

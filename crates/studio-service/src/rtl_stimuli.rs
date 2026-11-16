@@ -1,9 +1,6 @@
 //! Run saved, validated stimulus rows against generated RTL only.
 use crate::rtl_verification::{execute, log};
-use design_core::{
-    testbench::{CheckFailure, CheckReport},
-    CycleInput, CycleSample, Document, Kind, Workspace,
-};
+use design_core::{testbench::CheckReport, CycleInput, CycleSample, Document, Kind, Workspace};
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
@@ -145,48 +142,24 @@ fn compare(
     workspace: &Workspace,
     actual: &[CycleSample],
     reference: &[CycleSample],
-) -> (CheckReport, Value) {
+) -> Result<(CheckReport, Value), String> {
     let doc = &workspace.document;
-    let mut checks = CheckReport {
-        total: 0,
-        passed: 0,
-        failures: vec![],
-    };
+    let checks = workspace.testbench.check_samples(doc, actual)?;
     let mut passed = 0;
     let mut failures = vec![];
-    for (i, ((sample, rust), row)) in actual
-        .iter()
-        .zip(reference)
-        .zip(&workspace.testbench.rows)
-        .enumerate()
-    {
+    for (i, (sample, rust)) in actual.iter().zip(reference).enumerate() {
         for node in &doc.nodes {
             if sample.values[&node.id] == rust.values[&node.id] {
                 passed += 1;
             } else if failures.len() < 100 {
                 failures.push(json!({"cycle":i,"signal":node.name,"expected":node.decimal(rust.values[&node.id]),"actual":node.decimal(sample.values[&node.id])}));
             }
-            if node.kind == Kind::Output {
-                if let Some(expected) = row.expected.get(&node.name) {
-                    checks.total += 1;
-                    if node.parse_value(expected).unwrap() == sample.values[&node.id] {
-                        checks.passed += 1;
-                    } else if checks.failures.len() < 100 {
-                        checks.failures.push(CheckFailure {
-                            cycle: i,
-                            signal: node.name.clone(),
-                            expected: expected.clone(),
-                            actual: sample.outputs[&node.name].clone(),
-                        });
-                    }
-                }
-            }
         }
     }
-    (
+    Ok((
         checks,
         json!({"total":actual.len()*doc.nodes.len(),"passed":passed,"failures":failures}),
-    )
+    ))
 }
 pub(crate) fn run(root: &Path, workspace: &Workspace, engine: &str) -> Result<Run, String> {
     if workspace.document.has_modules() {
@@ -296,7 +269,7 @@ fn run_source(
         if !vcd.contains("$enddefinitions") || !vcd.contains("$var") || !vcd.contains("#") {
             return Err("RTL did not produce a valid VCD".into());
         }
-        let (checks, mut comparison) = compare(workspace, &actual, &reference);
+        let (checks, mut comparison) = compare(workspace, &actual, &reference)?;
         comparison["engine"] = json!(engine);
         comparison["artifact_directory"] = json!(dir);
         comparison["success"] =
@@ -350,6 +323,14 @@ mod tests {
             .group_module(&[inner, "delay".into()], "Pipeline")
             .unwrap();
         w.document = Arc::new(nested);
+        let rows = &mut std::sync::Arc::make_mut(&mut w.testbench).rows;
+        rows[1].expected.insert("current".into(), "lt 0".into());
+        rows[2]
+            .expected
+            .insert("result".into(), "eq prev.out.current".into());
+        rows[5]
+            .expected
+            .insert("current".into(), "eq in.inc".into());
         for engine in ["icarus", "verilator"] {
             let root = Root::new("nested-modules");
             let result = run(&root.0, &w, engine).unwrap();
@@ -463,7 +444,7 @@ mod tests {
         }
         let mut actual = samples(&w.document, &cycles, &text).unwrap();
         actual[1].values.insert("sum".into(), 1);
-        let (_, report) = compare(&w, &actual, &reference);
+        let (_, report) = compare(&w, &actual, &reference).unwrap();
         assert_eq!(report["passed"], report["total"].as_u64().unwrap() - 1);
         assert_eq!(report["failures"][0]["signal"], "sum");
     }

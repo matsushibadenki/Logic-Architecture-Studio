@@ -233,7 +233,7 @@ export function StimulusTable({
           {rows.length}/256 ·{" "}
           {draft ? t("unsavedPreferences") : t("savedPreferences")}
         </span>
-        <Hint text={t("stimuliHint")} />
+        <Hint text={`${t("stimuliHint")} ${t("assertionHint")}`} />
       </div>
       {(conflict || mismatch || error) && (
         <div role="alert" className="stimulus-warning">
@@ -321,9 +321,9 @@ export function StimulusTable({
                           <input
                             aria-label={`${t("sample")} ${i + 1} · ${t("expectedValue")} ${n.name}`}
                             placeholder="—"
-                            title={t("noExpectation")}
+                            title={t("assertionHint")}
                             value={row.expected[n.name] ?? ""}
-                            maxLength={20}
+                            maxLength={160}
                             disabled={disabled || conflict}
                             spellCheck={false}
                             onChange={(e) => {

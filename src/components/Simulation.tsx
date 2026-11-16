@@ -36,6 +36,8 @@ export function Simulation({
   const [inputMode, setInputMode] = useState<"manual" | "stimuli">("stimuli");
   const [values, setValues] = useState<Record<string, string>>({});
   const [mode, setMode] = useState<"table" | "wave">("table");
+  const [wavePage, setWavePage] = useState(0);
+  const [jump, setJump] = useState<{ traceId: string; signalId: string }>();
   const sequential = isSequential(snapshot.document);
   const inputs = () =>
     Object.fromEntries(
@@ -60,6 +62,18 @@ export function Simulation({
       index,
       radix,
     });
+  async function jumpToFailure(failure: AssertionFailure) {
+    if (!trace || !current) return;
+    const signalIndex = trace.signals.findIndex(
+      (signal) => signal.kind === "output" && signal.name === failure.signal,
+    );
+    if (signalIndex < 0) return;
+    const result = await choose(failure.cycle);
+    if (result?.id !== trace.id || result.selected !== failure.cycle) return;
+    setWavePage(Math.floor(signalIndex / SIGNALS_PER_PAGE));
+    setJump({ traceId: trace.id, signalId: trace.signals[signalIndex].id });
+    setMode("wave");
+  }
   async function rerun() {
     if (!trace) return;
     if (trace.testbench_version != null) {
@@ -219,19 +233,13 @@ export function Simulation({
                   : t("noChecks")}
               </strong>
               {trace.checks.failures.length > 0 && (
-                <div className="stimulus-failures">
-                  {trace.checks.failures.map((f) => (
-                    <button
-                      key={`${f.cycle}-${f.signal}`}
-                      disabled={busy || !current}
-                      onClick={() => void choose(f.cycle)}
-                    >
-                      {t("sample")} {f.cycle + 1} · {f.signal}:{" "}
-                      {t("expectedValue")} {f.expected} / {t("actualValue")}{" "}
-                      {f.actual}
-                    </button>
-                  ))}
-                </div>
+                <AssertionFailures
+                  key={trace.id}
+                  report={trace.checks}
+                  disabled={busy || !current}
+                  t={t}
+                  jump={(failure) => void jumpToFailure(failure)}
+                />
               )}
             </div>
           )}
@@ -347,6 +355,9 @@ export function Simulation({
             ) : (
               <Waveform
                 trace={trace}
+                page={wavePage}
+                setPage={setWavePage}
+                jump={current && jump?.traceId === trace.id ? jump : undefined}
                 disabled={busy || !current}
                 choose={(index) => void choose(index)}
                 labels={{
@@ -362,24 +373,147 @@ export function Simulation({
     </div>
   );
 }
+type AssertionReport = NonNullable<Trace["checks"]>;
+type AssertionFailure = AssertionReport["failures"][number];
+const SIGNALS_PER_PAGE = 12;
+
+function AssertionFailures({
+  report,
+  disabled,
+  t,
+  jump,
+}: {
+  report: AssertionReport;
+  disabled: boolean;
+  t: ReturnType<typeof translation>;
+  jump: (failure: AssertionFailure) => void;
+}) {
+  const [signal, setSignal] = useState("");
+  const [cycle, setCycle] = useState("");
+  const [page, setPage] = useState(0);
+  const pageSize = 25;
+  const signals = [
+    ...new Set(report.failures.map((failure) => failure.signal)),
+  ].sort();
+  const cycles = [
+    ...new Set(report.failures.map((failure) => failure.cycle)),
+  ].sort((a, b) => a - b);
+  const matches = report.failures.filter(
+    (failure) =>
+      (!signal || failure.signal === signal) &&
+      (!cycle || failure.cycle === Number(cycle)),
+  );
+  const start = page * pageSize;
+  const end = Math.min(start + pageSize, matches.length);
+  return (
+    <>
+      <div className="failure-filters">
+        <label>
+          {t("signals")}
+          <select
+            value={signal}
+            onChange={(event) => {
+              setSignal(event.target.value);
+              setPage(0);
+            }}
+          >
+            <option value="">{t("allFailureSignals")}</option>
+            {signals.map((name) => (
+              <option key={name}>{name}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          {t("sample")}
+          <select
+            value={cycle}
+            onChange={(event) => {
+              setCycle(event.target.value);
+              setPage(0);
+            }}
+          >
+            <option value="">{t("allFailureCycles")}</option>
+            {cycles.map((index) => (
+              <option key={index} value={index}>
+                {index + 1}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span role="status">
+          {matches.length} / {report.total - report.passed}
+        </span>
+      </div>
+      {matches.length > pageSize && (
+        <div className="failure-filters">
+          <IconButton
+            label={t("previousFailurePage")}
+            icon={ChevronLeft}
+            disabled={page === 0}
+            onClick={() => setPage(page - 1)}
+          />
+          <span role="status">
+            {start + 1}–{end} / {matches.length}
+          </span>
+          <IconButton
+            label={t("nextFailurePage")}
+            icon={ChevronRight}
+            disabled={end >= matches.length}
+            onClick={() => setPage(page + 1)}
+          />
+        </div>
+      )}
+      {matches.length === 0 ? (
+        <small>{t("noMatchingFailures")}</small>
+      ) : (
+        <div className="stimulus-failures">
+          {matches.slice(start, end).map((failure) => (
+            <button
+              key={`${failure.cycle}-${failure.signal}`}
+              disabled={disabled}
+              onClick={() => jump(failure)}
+            >
+              {t("sample")} {failure.cycle + 1} · {failure.signal} ·{" "}
+              {t("expectedValue")} {failure.expected} / {t("actualValue")}{" "}
+              {failure.actual}
+            </button>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 function Waveform({
   trace,
+  page,
+  setPage,
+  jump,
   disabled,
   choose,
   labels,
 }: {
   trace: Trace;
+  page: number;
+  setPage: (page: number) => void;
+  jump?: { signalId: string };
   disabled: boolean;
   choose: (index: number) => void;
   labels: { sample: string; signals: string; zoom: string };
 }) {
-  const [page, setPage] = useState(0);
   const [cell, setCell] = useState(112);
-  const pages = Math.max(1, Math.ceil(trace.signals.length / 12));
-  const start = Math.min(page, pages - 1) * 12;
-  const signals = trace.signals.slice(start, start + 12);
+  const pages = Math.max(1, Math.ceil(trace.signals.length / SIGNALS_PER_PAGE));
+  const start = Math.min(page, pages - 1) * SIGNALS_PER_PAGE;
+  const signals = trace.signals.slice(start, start + SIGNALS_PER_PAGE);
   const width = trace.samples.length * cell;
   const viewport = useRef<HTMLDivElement>(null);
+  const highlightedRow = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    highlightedRow.current?.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+    });
+  }, [jump]);
   useEffect(() => {
     const el = viewport.current;
     if (!el) return;
@@ -391,7 +525,7 @@ function Waveform({
     if (x < el.scrollLeft) el.scrollLeft = x;
     else if (x + cell > el.scrollLeft + visible)
       el.scrollLeft = x + cell - visible;
-  }, [trace.selected, cell, trace.id]);
+  }, [trace.selected, cell, trace.id, jump, start]);
 
   return (
     <>
@@ -409,7 +543,7 @@ function Waveform({
         <IconButton
           label="→"
           icon={ChevronRight}
-          disabled={start + 12 >= trace.signals.length}
+          disabled={start + SIGNALS_PER_PAGE >= trace.signals.length}
           onClick={() => setPage(Math.min(pages - 1, page + 1))}
         />
         <input
@@ -448,7 +582,11 @@ function Waveform({
           </div>
         </div>
         {signals.map((signal) => (
-          <div className="wave-row" key={signal.id}>
+          <div
+            className={`wave-row${jump?.signalId === signal.id ? " wave-row-highlight" : ""}`}
+            ref={jump?.signalId === signal.id ? highlightedRow : undefined}
+            key={signal.id}
+          >
             <strong
               title={`${signal.name} · ${signal.width}${signal.signed ? "s" : "u"}`}
             >
