@@ -1,3 +1,4 @@
+import { EdaJobStatus, useEdaJob } from "./EdaJob";
 import { useEffect, useState } from "react";
 import {
   CheckCircle2,
@@ -55,6 +56,7 @@ export function Results({
   const [rtl, setRtl] = useState<RtlResult | null>(null);
   const [log, setLog] = useState("");
   const r = snapshot.report;
+  const job = useEdaJob();
   useEffect(() => {
     if (tab === "tools")
       void rpc<typeof tools>("tools.status")
@@ -183,6 +185,7 @@ export function Results({
       ) : null}
       {tab === "tools" ? (
         <div className="tool-list">
+          <EdaJobStatus state={job} locale={snapshot.locale} />
           {tools.map((tool) => (
             <div key={tool.name}>
               <span
@@ -200,16 +203,19 @@ export function Results({
                       !tools.some(
                         (entry) => entry.name === "vvp" && entry.installed,
                       )) ||
-                    busy
+                    busy ||
+                    job.busy
                   }
                   onClick={() => {
-                    void action<RtlResult>("verify.rtl", {
-                      expected_revision: snapshot.revision,
-                      engine:
-                        tool.name === "verilator" ? "verilator" : "icarus",
-                    }).then((result) => {
-                      if (result) setRtl(result);
-                    });
+                    void job
+                      .run<RtlResult>("verify.rtl", {
+                        expected_revision: snapshot.revision,
+                        engine:
+                          tool.name === "verilator" ? "verilator" : "icarus",
+                      })
+                      .then((result) => {
+                        if (result) setRtl(result);
+                      });
                   }}
                 />
               ) : null}
@@ -217,11 +223,14 @@ export function Results({
                 <IconButton
                   label={t("proveAlu")}
                   icon={CheckCircle2}
-                  disabled={!tool.installed || busy}
+                  disabled={!tool.installed || busy || job.busy}
                   onClick={async () => {
-                    const result = await action<FormalResult>("verify.formal", {
-                      expected_revision: snapshot.revision,
-                    });
+                    const result = await job.run<FormalResult>(
+                      "verify.formal",
+                      {
+                        expected_revision: snapshot.revision,
+                      },
+                    );
                     if (result) setFormal(result);
                   }}
                 />
@@ -229,9 +238,11 @@ export function Results({
               {tool.name === "yosys" ? (
                 <button
                   className="text-button"
-                  disabled={!tool.installed || busy}
+                  disabled={!tool.installed || busy || job.busy}
                   onClick={async () => {
-                    const r = await action<{ log: string }>("synthesis.run");
+                    const r = await job.run<{ log: string }>("synthesis.run", {
+                      expected_revision: snapshot.revision,
+                    });
                     if (r) setLog(r.log);
                   }}
                 >

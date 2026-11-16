@@ -1,3 +1,4 @@
+import { EdaJobStatus, useEdaJob } from "./EdaJob";
 import { isSequential } from "../types";
 import { StimulusTable } from "./StimulusTable";
 import { useEffect, useRef, useState } from "react";
@@ -31,6 +32,7 @@ export function Simulation({
   busy: boolean;
 }) {
   const t = translation(snapshot.locale);
+  const rerunJob = useEdaJob();
   const trace = useSimulation();
   const current = trace?.revision === snapshot.revision;
   const [inputMode, setInputMode] = useState<"manual" | "stimuli">("stimuli");
@@ -77,14 +79,16 @@ export function Simulation({
   async function rerun() {
     if (!trace) return;
     if (trace.testbench_version != null) {
-      await simulate(
-        trace.external ? "simulation.rtl_testbench" : "simulation.testbench",
-        {
-          ...(trace.external ? { engine: trace.external.engine } : {}),
-          expected_revision: snapshot.revision,
-          expected_version: snapshot.testbench?.version ?? 0,
-        },
-      );
+      const args = {
+        expected_revision: snapshot.revision,
+        expected_version: snapshot.testbench?.version ?? 0,
+      };
+      if (trace.external)
+        await rerunJob.run("simulation.rtl_testbench", {
+          ...args,
+          engine: trace.external.engine,
+        });
+      else await simulate("simulation.testbench", args);
     } else if (sequential)
       await simulate("simulation.cycles", {
         expected_revision: snapshot.revision,
@@ -171,6 +175,7 @@ export function Simulation({
           <Hint text={t("simulationSemantics")} />
         </div>
       )}
+      <EdaJobStatus state={rerunJob} locale={snapshot.locale} />
       {trace && (
         <>
           {(!current ||
@@ -178,7 +183,10 @@ export function Simulation({
               trace.testbench_version !== snapshot.testbench?.version)) && (
             <div className="stale-banner" role="status">
               <strong>{t(!current ? "staleResults" : "stimuliChanged")}</strong>
-              <button disabled={busy} onClick={() => void rerun()}>
+              <button
+                disabled={busy || rerunJob.busy}
+                onClick={() => void rerun()}
+              >
                 <RefreshCw size={14} />
                 {t("rerun")}
               </button>

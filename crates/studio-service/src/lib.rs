@@ -1,4 +1,5 @@
 mod delta;
+mod jobs;
 pub mod native_sync;
 mod persistence;
 pub mod recovery;
@@ -19,7 +20,7 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -64,6 +65,7 @@ pub struct Service {
     root: PathBuf,
     _lock: Arc<File>,
     rtl_job: Arc<Mutex<()>>,
+    jobs: Arc<jobs::Jobs>,
     simulation: Arc<Mutex<simulation::Session>>,
 }
 impl Service {
@@ -93,6 +95,7 @@ impl Service {
                     .as_nanos()
             )))),
             rtl_job: Arc::new(Mutex::new(())),
+            jobs: Arc::new(jobs::Jobs::default()),
             simulation: Arc::new(Mutex::new(simulation::Session::default())),
             root: root.into(),
             _lock: Arc::new(lock),
@@ -133,11 +136,13 @@ impl Service {
                 actor: req.actor,
             };
         }
-        if let Some(definition) = design_core::protocol::tools()
-            .iter()
-            .find(|t| t["name"] == req.method)
-        {
-            design_core::protocol::validate(&definition["inputSchema"], &req.args)?;
+        validate_request(&req.method, &req.args)?;
+        match req.method.as_str() {
+            "job.start" => return self.jobs.start(self, req),
+            "job.status" | "job.cancel" => {
+                return self.jobs.inspect(&req.args, req.method == "job.cancel")
+            }
+            _ => {}
         }
         if req.method == "tools.status" {
             return Ok(tool_status());
@@ -172,6 +177,7 @@ impl Service {
             if session.version() != session_version {
                 return Err("Simulation changed during RTL execution; rerun".into());
             }
+            jobs::begin_publish()?;
             session.install_external(&state, run)?;
             return session.execute(&state, "simulation.state", &json!({}));
         }
@@ -204,8 +210,17 @@ impl Service {
             };
         }
         if req.method == "synthesis.run" {
+            let _job = self
+                .rtl_job
+                .try_lock()
+                .map_err(|_| "EDA tool already running")?;
             let (revision, source, name) = {
                 let state = self.state.lock().map_err(|e| e.to_string())?;
+                if let Some(expected) = req.args["expected_revision"].as_u64() {
+                    if expected != state.revision {
+                        return Err("Revision conflict".into());
+                    }
+                }
                 (
                     state.revision,
                     state.document.rtl()?,
@@ -266,6 +281,9 @@ impl Service {
         }
         if req.method == "project.inspect" || req.method == "design.get_ir" {
             return Ok(state.snapshot());
+        }
+        if req.method == "revision.changes_since" {
+            return state.revision_changes_since(&req.args);
         }
         // Transactional clone: failed validation or disk writes never change the live document.
         let mut next = state.clone();
@@ -348,6 +366,16 @@ impl Service {
         Ok(())
     }
 }
+fn validate_request(method: &str, args: &Value) -> Result<(), String> {
+    if let Some(definition) = design_core::protocol::tools()
+        .iter()
+        .find(|t| t["name"] == method)
+    {
+        design_core::protocol::validate(&definition["inputSchema"], args)?;
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
 pub fn call(root: &Path, request: &Request) -> Result<Value, String> {
     let mut stream = UnixStream::connect(socket_path(root))
@@ -425,35 +453,20 @@ fn synthesis(root: &Path, revision: u64, source: &str, name: &str) -> Result<Val
     let dir = root.join(format!(".logic/runs/{revision}-{run}"));
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     fs::write(dir.join("design.v"), source).map_err(|e| e.to_string())?;
-    let log = File::create(dir.join("yosys.log")).map_err(|e| e.to_string())?;
-    let err = log.try_clone().map_err(|e| e.to_string())?;
-    let mut child = std::process::Command::new(binary)
-        .current_dir(&dir)
-        .args(["-p", &script])
-        .stdin(std::process::Stdio::null())
-        .stdout(log)
-        .stderr(err)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    let start = Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-            break status;
-        }
-        if start.elapsed() > Duration::from_secs(30) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("Yosys timed out after 30 seconds".into());
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    };
+    let success = rtl_verification::execute(
+        &binary,
+        &["-p", &script],
+        &dir,
+        "yosys.log",
+        std::time::Instant::now() + Duration::from_secs(30),
+    )?;
     let mut log = String::new();
     File::open(dir.join("yosys.log"))
         .map_err(|e| e.to_string())?
         .take(256 * 1024)
         .read_to_string(&mut log)
         .map_err(|e| e.to_string())?;
-    let result = json!({"revision":revision,"success":status.success(),"engine":"Yosys","log":log,"artifact_directory":dir,"ppa":null});
+    let result = json!({"revision":revision,"success":success,"engine":"Yosys","log":log,"artifact_directory":dir,"ppa":null});
     fs::write(
         dir.join("result.json"),
         serde_json::to_vec_pretty(&result).unwrap(),
@@ -462,117 +475,6 @@ fn synthesis(root: &Path, revision: u64, source: &str, name: &str) -> Result<Val
     Ok(result)
 }
 
-pub fn mcp_message(
-    message: Value,
-    initialized: &mut bool,
-    write_enabled: bool,
-    mut execute: impl FnMut(Request) -> Result<Value, String>,
-) -> Option<Value> {
-    let id = message.get("id").cloned();
-    let method = message["method"].as_str().unwrap_or("");
-    let id = id?;
-    let response = (|| -> Result<Value, (i32, String)> {
-        if message["jsonrpc"] != "2.0" {
-            return Err((-32600, "JSON-RPC 2.0 required".into()));
-        }
-        if method == "initialize" {
-            *initialized = true;
-            return Ok(
-                json!({"protocolVersion":"2025-11-25","capabilities":{"tools":{},"resources":{},"prompts":{}},"serverInfo":{"name":"logic-architecture-studio","version":env!("CARGO_PKG_VERSION")},"instructions":"Inspect revision, propose patches, then apply with expected_revision. Writes require --allow-write. Candidate adoption is GUI-only. Legacy MCP 2025-11-25 transport."}),
-            );
-        }
-        if !*initialized {
-            return Err((-32002, "Initialize the MCP session first".into()));
-        }
-        let args = message["params"].clone();
-        match method {
-            "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({"tools":design_core::protocol::tools()})),
-            "tools/call" => {
-                let name = args["name"]
-                    .as_str()
-                    .ok_or((-32602, "Missing tool name".into()))?;
-                let definitions = design_core::protocol::tools();
-                let definition = definitions
-                    .iter()
-                    .find(|t| t["name"] == name)
-                    .ok_or((-32602, "Unknown tool".into()))?;
-                let arguments = args.get("arguments").cloned().unwrap_or(json!({}));
-                design_core::protocol::validate(&definition["inputSchema"], &arguments)
-                    .map_err(|e| (-32602, e))?;
-                let read_only = [
-                    "project.inspect",
-                    "project.export",
-                    "design.get_ir",
-                    "design.propose_patch",
-                    "rtl.generate",
-                    "simulation.evaluate",
-                    "simulation.cycles",
-                    "simulation.testbench",
-                    "testbench.export_csv",
-                    "simulation.vcd",
-                    "simulation.state",
-                    "simulation.select",
-                    "revision.diff",
-                    "experiment.compare",
-                    "experiment.get_status",
-                    "tools.status",
-                ];
-                if !write_enabled && !read_only.contains(&name) {
-                    return Ok(
-                        json!({"isError":true,"content":[{"type":"text","text":"Write capability disabled. Launch with --allow-write to authorize editing and jobs."}]}),
-                    );
-                }
-                let result = execute(Request {
-                    method: name.into(),
-                    args: arguments,
-                    actor: "mcp".into(),
-                });
-                Ok(match result {
-                    Ok(value) => {
-                        json!({"isError":false,"content":[{"type":"text","text":value.to_string()}],"structuredContent":{"result":value}})
-                    }
-                    Err(error) => json!({"isError":true,"content":[{"type":"text","text":error}]}),
-                })
-            }
-            "resources/list" => Ok(
-                json!({"resources":[{"uri":"logic://workspace/ir","name":"Canonical design IR","mimeType":"application/json"}]}),
-            ),
-            "resources/read" => {
-                if args["uri"] != "logic://workspace/ir" {
-                    return Err((-32602, "Unknown resource".into()));
-                }
-                let state = execute(Request {
-                    method: "design.get_ir".into(),
-                    args: json!({}),
-                    actor: "mcp".into(),
-                })
-                .map_err(|e| (-32000, e))?;
-                Ok(
-                    json!({"contents":[{"uri":"logic://workspace/ir","mimeType":"application/json","text":state.to_string()}]}),
-                )
-            }
-            "prompts/list" => Ok(
-                json!({"prompts":[{"name":"explore_architecture","description":"Revision-safe architecture exploration with independent verification"}]}),
-            ),
-            "prompts/get" => {
-                if args["name"] != "explore_architecture" {
-                    return Err((-32602, "Unknown prompt".into()));
-                }
-                Ok(
-                    json!({"messages":[{"role":"user","content":{"type":"text","text":"Inspect the IR and its revision. Define an independent behavioral contract. Propose isolated candidates, run the same test vectors on every candidate, and report failures honestly. Never claim PPA improvements without actual synthesis and physical results. Leave adoption to the user."}}]}),
-                )
-            }
-            _ => Err((-32601, "Method not found".into())),
-        }
-    })();
-    Some(match response {
-        Ok(result) => json!({"jsonrpc":"2.0","id":id,"result":result}),
-        Err((code, message)) => {
-            json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
-        }
-    })
-}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -822,19 +724,45 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn mcp_permissions_and_discovery() {
-        let mut init = false;
-        let response = mcp_message(
-            json!({"jsonrpc":"2.0","id":1,"method":"initialize"}),
-            &mut init,
-            false,
-            |_| unreachable!(),
-        )
-        .unwrap();
-        assert_eq!(response["result"]["protocolVersion"], "2025-11-25");
-        let result=mcp_message(json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"design.undo","arguments":{"expected_revision":0}}}),&mut init,false,|_|panic!("read-only must not execute writes")).unwrap();
-        assert_eq!(result["result"]["isError"], true);
+    fn revision_summaries_detect_history_gaps() {
+        let mut workspace = Workspace::default();
+        for revision in 0..102 {
+            workspace
+                .dispatch(
+                    "design.apply_patch",
+                    json!({
+                        "expected_revision":revision,
+                        "label":"Move add",
+                        "operations":[{"op":"update_node","id":"add","x":500 + revision}]
+                    }),
+                    "gui",
+                )
+                .unwrap();
+        }
+        for (since, count, resync) in [
+            (102, 0, false),
+            (100, 2, false),
+            (2, 100, false),
+            (1, 0, true),
+            (103, 0, true),
+        ] {
+            let result = workspace
+                .revision_changes_since(&json!({"since_revision":since}))
+                .unwrap();
+            assert_eq!(result["revision"], 102);
+            assert_eq!(result["resync_required"], resync);
+            let changes = result["changes"].as_array().unwrap();
+            assert_eq!(changes.len(), count);
+            if let Some(last) = changes.last() {
+                assert_eq!(
+                    *last,
+                    json!({"revision":102,"actor":"gui","label":"Move add"})
+                );
+            }
+        }
+        assert_eq!(workspace.revision, 102);
     }
+
     #[test]
     fn serialized_native_move_commits_and_replays() {
         let root = std::env::temp_dir().join(format!("las-native-move-{}", std::process::id()));

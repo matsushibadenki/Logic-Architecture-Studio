@@ -294,6 +294,27 @@ impl Workspace {
             Ok(())
         }
     }
+    pub fn revision_changes_since(&self, args: &Value) -> Result<Value, String> {
+        let since = args["since_revision"]
+            .as_u64()
+            .ok_or("Missing since_revision")?;
+        let first = self
+            .history
+            .partition_point(|event| event.revision <= since);
+        let events = &self.history[first..];
+        let contiguous = since <= self.revision
+            && u64::try_from(events.len()).ok() == Some(self.revision - since)
+            && events
+                .iter()
+                .enumerate()
+                .all(|(index, event)| event.revision == since + index as u64 + 1);
+        Ok(json!({
+            "revision": self.revision,
+            "resync_required": !contiguous,
+            "changes": if contiguous { events } else { &[] },
+        }))
+    }
+
     fn record(&mut self, label: String, actor: &str) {
         self.revision += 1;
         self.history.push(Revision {
@@ -710,6 +731,7 @@ impl Workspace {
                 self.report = Some(report.clone());
                 Ok(json!(report))
             }
+            "revision.changes_since" => self.revision_changes_since(&args),
             "revision.diff" => {
                 let prev = self.undo.last().ok_or("No previous revision")?;
                 Ok(json!({"before":prev,"after":self.document,"revision":self.revision}))

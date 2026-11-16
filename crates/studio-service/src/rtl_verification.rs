@@ -93,6 +93,7 @@ pub(crate) fn execute(
     log_name: &str,
     deadline: Instant,
 ) -> Result<bool, String> {
+    crate::jobs::checkpoint()?;
     let log = File::create(dir.join(log_name)).map_err(|e| e.to_string())?;
     let mut command = Command::new(binary);
     command
@@ -107,6 +108,7 @@ pub(crate) fn execute(
         command.process_group(0);
     }
     let mut child = command.spawn().map_err(|e| e.to_string())?;
+    crate::jobs::stage(log_name);
     loop {
         let status = child.try_wait();
         let excessive = fs::metadata(dir.join(log_name))
@@ -114,14 +116,18 @@ pub(crate) fn execute(
             .unwrap_or(false);
         let vcd_excessive = fs::metadata(dir.join("simulation.vcd"))
             .is_ok_and(|m| m.len() > crate::rtl_stimuli::VCD_LIMIT);
-        if Instant::now() >= deadline || excessive || vcd_excessive || status.is_err() {
+        let cancelled = crate::jobs::cancelled();
+        if cancelled || Instant::now() >= deadline || excessive || vcd_excessive || status.is_err()
+        {
             #[cfg(unix)]
             unsafe {
                 libc::kill(-(child.id() as i32), libc::SIGKILL);
             }
             let _ = child.kill();
             let _ = child.wait();
-            return Err(if vcd_excessive {
+            return Err(if cancelled {
+                "Job cancelled"
+            } else if vcd_excessive {
                 "VCD exceeds 12 MiB"
             } else if excessive {
                 "Tool output exceeded 4 MiB"

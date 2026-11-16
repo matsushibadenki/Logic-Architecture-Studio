@@ -36,8 +36,9 @@
 - 🟢 [Done] Rust-owned typed combinational IR, atomic patch validation and revision conflicts.
 - 🟢 [Done] Single service shared by GUI/MCP; private Unix socket and exclusive owner lock.
 - 🟢 [Done] Snapshot Undo/Redo, atomic JSON replacement, rollback on storage failure.
-- 🟢 [Done] MCP stdio legacy lifecycle, shared tool schemas, IR resource, research prompt, read-only default.
-- 🟠 [Next] rmcp migration, modern MCP lifecycle, structured error codes and incremental event summaries.
+- 🟢 [Done] MCP stdio, shared tool schemas, IR resource, research prompt and read-only default.
+- 🟢 [Done] Read-only MCP revision summaries since a client revision, with an explicit resync signal for missing or future revisions. The service reads the retained log directly without cloning the workspace or writing a checkpoint.
+- 🟢 [Done] rmcp stdio with 2026-07-28 discovery and 2025-11-25 legacy initialization. Structured tool errors and protocol error data. Live stdio integration verifies both lifecycles, existing tools, IR resource, research prompt and revision summaries.
 - 🟢 [Done] Versioned design-file export/import with graph validation, revision checks and Undo.
 - 🟢 [Done] Combined Undo/Redo limits: 100 snapshots and 16 MiB serialized history.
 - 🟢 [Done] Startup recovery window for damaged workspace/checkpoint/journal/layout files; preview validated current/previous checkpoints, preserve originals before explicit restoration, scoped layout reset and exact-workspace restart.
@@ -45,6 +46,7 @@
 - 🟢 [Done] macOS native workspace-folder picker from editor/recovery/startup, remembered selection, cancel/same-folder no-op and missing-folder protection; editing/restart QA in docs/WORKSPACES.md.
 - 🟢 [Done] Native checkpoint-backup selection, validation, original-file archiving and restoration with persisted Undo/Redo; verified in the macOS app.
 - 🟢 [Done] Explicit valid-prefix move-log salvage: shared strict decoder stops at the first damaged frame, previews recovered moves/revision and excluded bytes, preserves originals and restores Undo/Redo; macOS restart/editing/panel QA in docs/RECOVERY.md.
+- 🟢 [Done] MCP foundation Phase 1. Transport-neutral AppAdapter and ToolRegistry, shared schema and access validation, structured errors, bounded document state, and a standalone in-memory SampleAdapter. Verified sample CRUD without Design Core and paged state over the real workspace bridge. See docs/MCP.md.
 - 🔴 [Later] SQLite Design Store, semantic diff, remote authenticated transport.
 
 ## UI / Rendering
@@ -137,7 +139,8 @@
 
 - 🟢 [Done] Isolated revision-bound candidate documents, common vectors, comparison and guarded GUI adoption.
 - 🟢 [Done] Regression-detection example using baseline, ADD→SUB, XOR→OR candidates.
-- 🟠 [Next] Job IDs, cancellation, process/resource limits and OS sandboxing.
+- 🟢 [Done] External verification and synthesis job IDs, status polling and cancellation via UI and MCP. Cancelling stops the tool process group before another job can run. Verified cancellation during real Verilator compilation and Yosys synthesis, then successful reruns.
+- 🟠 [Next] OS sandboxing and broader process/resource limits for external tools.
 - 🟠 [Next] Internal model adapter, MCP client and budgeted autonomous exploration loop.
 - 🔴 [Later] Planned GGUF model support: [gemma-4-31B-it-ARA-heretic-GGUF](https://huggingface.co/mradermacher/gemma-4-31B-it-ARA-heretic-GGUF); runtime integration/inference unimplemented. See [model support plan](docs/MODELS.md).
 - 🔴 [Later] Ripple/Carry-select/Brent–Kung/Kogge–Stone generators and measured Pareto optimization.

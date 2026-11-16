@@ -1,3 +1,4 @@
+import { EdaJobStatus, useEdaJob } from "./EdaJob";
 import { isSequential } from "../types";
 import { useRef, useState } from "react";
 import {
@@ -36,6 +37,7 @@ export function StimulusTable({
     rows: Stimulus[];
   } | null>(null);
   const [running, setRunning] = useState(false);
+  const job = useEdaJob();
   const [engine, setEngine] = useState("rust");
   const [page, setPage] = useState(0);
   const [error, setError] = useState("");
@@ -211,16 +213,14 @@ export function StimulusTable({
           onClick={async () => {
             setRunning(true);
             try {
-              await simulate(
-                engine === "rust"
-                  ? "simulation.testbench"
-                  : "simulation.rtl_testbench",
-                {
-                  ...(engine === "rust" ? {} : { engine }),
-                  expected_revision: snapshot.revision,
-                  expected_version: saved.version,
-                },
-              );
+              const args = {
+                expected_revision: snapshot.revision,
+                expected_version: saved.version,
+              };
+              if (engine === "rust")
+                await simulate("simulation.testbench", args);
+              else
+                await job.run("simulation.rtl_testbench", { ...args, engine });
             } finally {
               setRunning(false);
             }
@@ -235,6 +235,7 @@ export function StimulusTable({
         </span>
         <Hint text={`${t("stimuliHint")} ${t("assertionHint")}`} />
       </div>
+      <EdaJobStatus state={job} locale={snapshot.locale} />
       {(conflict || mismatch || error) && (
         <div role="alert" className="stimulus-warning">
           {error || (conflict ? t("stimuliConflict") : t("stimuliSchema"))}

@@ -76,7 +76,17 @@ fn mcp_and_gui_share_revisions_and_persist() {
         input.flush().unwrap();
         let mut line = String::new();
         output.read_line(&mut line).unwrap();
-        serde_json::from_str::<Value>(&line).unwrap()
+        let reply = serde_json::from_str::<Value>(&line).unwrap();
+        if method == "initialize" {
+            writeln!(
+                input,
+                "{}",
+                json!({"jsonrpc":"2.0","method":"notifications/initialized"})
+            )
+            .unwrap();
+            input.flush().unwrap();
+        }
+        reply
     };
     assert_eq!(
         request(
@@ -108,6 +118,118 @@ fn mcp_and_gui_share_revisions_and_persist() {
         )["result"]["isError"],
         false
     );
+    assert_eq!(
+        request(
+            "tools/call",
+            json!({"name":"revision.changes_since","arguments":{"since_revision":0}})
+        )["result"]["structuredContent"]["result"],
+        json!({"revision":1,"resync_required":false,"changes":[
+            {"revision":1,"label":"MCP rename","actor":"mcp"}
+        ]})
+    );
+    assert_eq!(
+        request(
+            "tools/call",
+            json!({"name":"design.apply_patch","arguments":patch})
+        )["result"]["structuredContent"]["error"]["code"],
+        "revision_conflict"
+    );
+
+    // A separate read-only process negotiates the new lifecycle without initialize.
+    let mut modern = Guard(
+        Command::new(env!("CARGO_BIN_EXE_logic-mcp"))
+            .env("LAS_WORKSPACE", &root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let mut modern_input = modern.0.stdin.take().unwrap();
+    let mut modern_output = BufReader::new(modern.0.stdout.take().unwrap());
+    let mut id = 0;
+    let mut modern_request = |method: &str, mut params: Value| {
+        id += 1;
+        params["_meta"] = json!({
+            "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+            "io.modelcontextprotocol/clientInfo":{"name":"interop","version":"1"},
+            "io.modelcontextprotocol/clientCapabilities":{}
+        });
+        writeln!(
+            modern_input,
+            "{}",
+            json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})
+        )
+        .unwrap();
+        modern_input.flush().unwrap();
+        let mut line = String::new();
+        modern_output.read_line(&mut line).unwrap();
+        let reply: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(reply["id"], id);
+        reply
+    };
+    let discovery = modern_request("server/discover", json!({}));
+    assert!(discovery["result"]["supportedVersions"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{discovery}"))
+        .contains(&json!("2026-07-28")));
+    let tools = modern_request("tools/list", json!({}));
+    let tools = tools["result"]["tools"].as_array().unwrap();
+    assert!(tools
+        .iter()
+        .any(|tool| tool["name"] == "revision.changes_since"));
+    let summary = modern_request(
+        "tools/call",
+        json!({"name":"revision.changes_since","arguments":{"since_revision":0}}),
+    );
+    assert_eq!(summary["result"]["resultType"], "complete");
+    assert_eq!(
+        summary["result"]["structuredContent"]["result"]["changes"][0]["label"],
+        "MCP rename"
+    );
+    let simulate = modern_request(
+        "tools/call",
+        json!({"name":"simulation.evaluate","arguments":{"inputs":{"a":"3","b":"4","op":"0"}}}),
+    );
+    assert_eq!(
+        simulate["result"]["structuredContent"]["result"]["outputs"]["result"],
+        "7"
+    );
+    let denied = modern_request(
+        "tools/call",
+        json!({"name":"design.undo","arguments":{"expected_revision":1}}),
+    );
+    assert_eq!(denied["result"]["isError"], true);
+    assert_eq!(
+        denied["result"]["structuredContent"]["error"]["code"],
+        "write_disabled"
+    );
+    let invalid = modern_request(
+        "tools/call",
+        json!({"name":"revision.changes_since","arguments":{"since_revision":"bad"}}),
+    );
+    assert_eq!(
+        invalid["result"]["structuredContent"]["error"]["code"],
+        "invalid_arguments"
+    );
+    let unknown = modern_request("tools/call", json!({"name":"unknown.tool"}));
+    assert_eq!(unknown["error"]["data"]["code"], "unknown_tool");
+    let state = modern_request(
+        "tools/call",
+        json!({
+            "name":"core.get_document_state","arguments":{"document_id":"workspace","limit":1}
+        }),
+    );
+    let state = &state["result"]["structuredContent"]["result"];
+    assert_eq!(state["document"]["revision"], 1);
+    assert_eq!(state["nodes"]["items"].as_array().unwrap().len(), 1);
+    assert_eq!(state["nodes"]["next_offset"], 1);
+    let resource = modern_request("resources/read", json!({"uri":"logic://workspace/ir"}));
+    assert_eq!(
+        resource["result"]["contents"][0]["mimeType"],
+        "application/json"
+    );
+    let prompt = modern_request("prompts/get", json!({"name":"explore_architecture"}));
+    assert_eq!(prompt["result"]["messages"][0]["role"], "user");
     let updated = call("project.inspect", json!({})).unwrap();
     let web_delta = call(
         "project.sync",
@@ -149,6 +271,11 @@ fn mcp_and_gui_share_revisions_and_persist() {
     );
     service.0.kill().unwrap();
     service.0.wait().unwrap();
+    let offline = modern_request("tools/call", json!({"name":"project.inspect"}));
+    assert_eq!(
+        offline["result"]["structuredContent"]["error"]["code"],
+        "app_not_connected"
+    );
     service = start();
     for _ in 0..100 {
         if call("project.inspect", json!({})).is_ok() {
