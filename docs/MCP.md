@@ -30,6 +30,16 @@ Resource: `logic://workspace/ir`. Prompt: `explore_architecture`.
 
 The self-contained tool schemas define a deliberately small JSON Schema vocabulary; the server validates every keyword it emits and then deserializes typed Rust operations and validates graph semantics. It does not accept arbitrary external schemas or resolve remote references.
 
+## Desktop MCP settings (Phase 4)
+
+Open **Preferences → MCP**. A workspace contains one circuit document, including its module definitions. Select **Publish** for the named circuit. Reading is included with publication. Enable simulation access or write requests as needed, then select **Start**. The app starts a loopback server on an available port and creates a new Bearer token. Copy the URL and reveal the token only when configuring a local client. The publishing and scope choices are stored per workspace. The server always starts stopped when the application opens.
+
+In the Inspector commands below, use the URL and token from Preferences. Leaving the MCP tab or closing Preferences keeps the server running. Select **Stop** to close the listener and invalidate its token and approvals. Stop before changing the policy. Exiting or switching workspaces closes the published connection. A Core operation already dispatched before stopping can finish.
+
+For a write request, open its entry under **Write approvals**, review the exact tool arguments, and select **Approve** or **Deny**. An approved client must retry the same request within 120 seconds of the initial request. The desktop server accepts decisions only from the Preferences window. The edit runs through the same Design Core as the editor and updates the native canvas and panels. Desktop audit records are kept in the private `.logic/mcp/` directory within the workspace.
+
+On macOS, Inspector 2.15.0 listed 45 tools and saw only the published ALU32 document. Read-only mode rejected edits, simulations, and requests for an unknown document. Two writes at revision 0 were reviewed in Preferences. The denied write returned `approval_denied` and kept revision 0. The approved retry renamed and moved the ADD node, and the native GPU canvas and inspector showed `mcp_sum` at revision 1 without a restart. Stopping closed the listener, restarting invalidated the previous token, and unpublishing disabled startup.
+
 ## Local Streamable HTTP and access control
 
 Start Design Core for the same workspace. Create a private security directory owned by the account running the bridge. Use one independently generated 32-byte token per client. Put the original 64-character hexadecimal token in the client's secret store and put only its SHA-256 digest in the server configuration.

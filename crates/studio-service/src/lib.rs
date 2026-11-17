@@ -1,5 +1,6 @@
 mod delta;
 mod jobs;
+pub mod mcp;
 pub mod native_sync;
 mod persistence;
 pub mod recovery;

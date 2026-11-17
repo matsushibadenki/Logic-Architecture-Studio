@@ -49,6 +49,7 @@
 - 🟢 [Done] MCP foundation Phase 1. Transport-neutral AppAdapter and ToolRegistry, shared schema and access validation, structured errors, bounded document state, and a standalone in-memory SampleAdapter. Verified sample CRUD without Design Core and paged state over the real workspace bridge. See docs/MCP.md.
 - 🟢 [Done] MCP foundation Phase 2. rmcp Streamable HTTP on opt-in IPv4 loopback, with local Host and Origin enforcement and read-only workspace access by default. Inspector 2.15.0 verified connection, 45 tool definitions and simulation over both HTTP lifecycles, and tool discovery and revision summaries over stdio. See docs/MCP.md.
 - 🟢 [Done] MCP foundation Phase 3. Loopback bearer authentication, credential-bound legacy sessions, tool scopes, separate one-time write approval, per-client rate limits and redacted audit logs. Inspector 2.15.0 verified permitted and rejected calls, approved edits and stdio compatibility. See docs/MCP.md.
+- 🟢 [Done] MCP foundation Phase 4. Tauri Preferences manages loopback start/stop, publication of the current workspace document, client scopes, and in-app write approvals. Verified macOS approval and denial with Inspector 2.15.0, including the approved rename and move appearing on the GPU canvas without reopening the workspace. See docs/MCP.md.
 - 🔴 [Later] SQLite Design Store, semantic diff, remote authenticated transport.
 
 ## UI / Rendering

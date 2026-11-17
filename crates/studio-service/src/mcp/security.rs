@@ -6,7 +6,7 @@ use axum::{
 };
 use hmac::{Hmac, Mac};
 use mcp_core::Access;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -108,6 +108,13 @@ struct Approval {
     decision: Option<bool>,
 }
 
+#[derive(Serialize)]
+pub struct ApprovalSummary {
+    pub id: String,
+    pub principal: String,
+    pub tool: String,
+}
+
 pub enum Decision {
     Allowed(String),
     Pending(String),
@@ -166,8 +173,6 @@ impl Security {
         hosts: [String; 2],
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         check_private(&fs::symlink_metadata(dir)?, true)?;
-        let owner = open_private(&dir.join("owner.lock"), true)?;
-        owner.try_lock()?;
         let file = open_private(&dir.join("clients.json"), false)?;
         let mut bytes = Vec::new();
         file.take(65_537).read_to_end(&mut bytes)?;
@@ -176,6 +181,50 @@ impl Security {
         }
         let config: Config =
             serde_json::from_slice(&bytes).map_err(|_| "Invalid MCP credential configuration")?;
+        Self::open(dir, hosts, config)
+    }
+
+    pub fn desktop(
+        dir: &Path,
+        hosts: [String; 2],
+        session: bool,
+        write: bool,
+    ) -> Result<(Self, String), Box<dyn std::error::Error + Send + Sync>> {
+        use std::os::unix::fs::DirBuilderExt;
+        match fs::DirBuilder::new().mode(0o700).create(dir) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
+        let mut bytes = [0; 32];
+        getrandom::fill(&mut bytes)?;
+        let token: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+        let mut scopes = vec![Scope::Read];
+        if session {
+            scopes.push(Scope::Session);
+        }
+        if write {
+            scopes.push(Scope::Write);
+        }
+        let config = Config {
+            clients: vec![Client {
+                id: "desktop-client".into(),
+                token_sha256: format!("{:x}", Sha256::digest(token.as_bytes())),
+                scopes,
+            }],
+            requests_per_minute: default_limit(),
+        };
+        Ok((Self::open(dir, hosts, config)?, token))
+    }
+
+    fn open(
+        dir: &Path,
+        hosts: [String; 2],
+        config: Config,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        check_private(&fs::symlink_metadata(dir)?, true)?;
+        let owner = open_private(&dir.join("owner.lock"), true)?;
+        owner.try_lock()?;
         if !(1..=32).contains(&config.clients.len())
             || !(1..=6000).contains(&config.requests_per_minute)
         {
@@ -273,6 +322,73 @@ impl Security {
             decision: None,
         });
         Ok(Decision::Pending(id))
+    }
+
+    pub fn pending(&self) -> Vec<ApprovalSummary> {
+        let now = Instant::now();
+        self.approvals
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|approval| approval.expires > now && approval.decision.is_none())
+            .map(|approval| ApprovalSummary {
+                id: approval.id.clone(),
+                principal: approval.principal.clone(),
+                tool: approval.tool.clone(),
+            })
+            .collect()
+    }
+
+    pub fn review(&self, id: &str) -> Option<Value> {
+        let approvals = self.approvals.lock().unwrap();
+        approvals
+            .iter()
+            .find(|approval| {
+                approval.id == id
+                    && approval.expires > Instant::now()
+                    && approval.decision.is_none()
+            })
+            .map(|approval| approval.args.clone())
+    }
+
+    pub fn desktop_decide(&self, id: &str, approve: bool) -> Result<(), &'static str> {
+        let principal = Principal {
+            id: "desktop-operator".into(),
+            scopes: vec![Scope::Approve],
+        };
+        match self.set_decision(&principal, id, approve) {
+            Ok(()) => Ok(()),
+            Err(StatusCode::NOT_FOUND) => Err("approval_expired"),
+            Err(StatusCode::CONFLICT) => Err("approval_already_decided"),
+            Err(_) => Err("audit_unavailable"),
+        }
+    }
+
+    fn set_decision(
+        &self,
+        principal: &Principal,
+        id: &str,
+        approve: bool,
+    ) -> Result<(), StatusCode> {
+        let mut approvals = self.approvals.lock().unwrap();
+        let approval = approvals
+            .iter_mut()
+            .find(|a| a.id == id && a.expires > Instant::now())
+            .ok_or(StatusCode::NOT_FOUND)?;
+        if approval.decision.is_some() {
+            return Err(StatusCode::CONFLICT);
+        }
+        self.record(
+            Some(principal),
+            &approval.tool,
+            if approve { "approved" } else { "denied" },
+            Some(id),
+            approval.args["expected_revision"].as_u64(),
+            Duration::ZERO,
+        )
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        approval.decision = Some(approve);
+        Ok(())
     }
 
     pub fn record(
@@ -437,9 +553,8 @@ fn check_rate(
 pub async fn preview(
     State(security): State<Arc<Security>>,
     RoutePath(id): RoutePath<String>,
-    Extension(principal): Extension<Principal>,
 ) -> Response {
-    approval_action(&security, &principal, &id, None)
+    approval_preview(&security, &id)
 }
 
 pub async fn decide(
@@ -447,47 +562,26 @@ pub async fn decide(
     RoutePath((id, action)): RoutePath<(String, String)>,
     Extension(principal): Extension<Principal>,
 ) -> Response {
-    match action.as_str() {
-        "approve" => approval_action(&security, &principal, &id, Some(true)),
-        "deny" => approval_action(&security, &principal, &id, Some(false)),
-        _ => StatusCode::NOT_FOUND.into_response(),
-    }
+    let approve = match action.as_str() {
+        "approve" => true,
+        "deny" => false,
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+    security
+        .set_decision(&principal, &id, approve)
+        .err()
+        .unwrap_or(StatusCode::NO_CONTENT)
+        .into_response()
 }
 
-fn approval_action(
-    security: &Security,
-    principal: &Principal,
-    id: &str,
-    decision: Option<bool>,
-) -> Response {
-    let mut approvals = security.approvals.lock().unwrap();
+fn approval_preview(security: &Security, id: &str) -> Response {
+    let approvals = security.approvals.lock().unwrap();
     let Some(approval) = approvals
-        .iter_mut()
+        .iter()
         .find(|a| a.id == id && a.expires > Instant::now())
     else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    if let Some(decision) = decision {
-        if approval.decision.is_some() {
-            return StatusCode::CONFLICT.into_response();
-        }
-        let outcome = if decision { "approved" } else { "denied" };
-        if security
-            .record(
-                Some(principal),
-                &approval.tool,
-                outcome,
-                Some(id),
-                approval.args["expected_revision"].as_u64(),
-                Duration::ZERO,
-            )
-            .is_err()
-        {
-            return StatusCode::SERVICE_UNAVAILABLE.into_response();
-        }
-        approval.decision = Some(decision);
-        return StatusCode::NO_CONTENT.into_response();
-    }
     let body = json!({"id":id,"principal":approval.principal,"tool":approval.tool,"arguments":approval.args});
     (
         [

@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod layout_store;
+mod mcp;
 mod measurement;
 mod native;
 mod panels;
@@ -282,6 +283,7 @@ fn main() {
                 });
             }
             let saved = store.data.lock().unwrap().clone();
+            app.manage(mcp::State::new(&root));
             app.manage(CoreRoot(root));
             let panels = panels::Panels::default();
             *panels.homes.lock().unwrap() = saved.homes;
@@ -384,6 +386,13 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             command,
             preferences::preferences_open,
+            mcp::mcp_status,
+            mcp::mcp_configure,
+            mcp::mcp_start,
+            mcp::mcp_stop,
+            mcp::mcp_token,
+            mcp::mcp_review,
+            mcp::mcp_decide,
             native::open_module,
             native::return_to_workspace,
             save_vcd,
@@ -407,5 +416,11 @@ fn main() {
         ])
         .build(context)
         .expect("Cannot run Logic Architecture Studio")
-        .run(|_, _| {});
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                if let Some(mcp) = app.try_state::<mcp::State>() {
+                    mcp.stop();
+                }
+            }
+        });
 }

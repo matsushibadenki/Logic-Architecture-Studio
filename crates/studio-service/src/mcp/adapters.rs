@@ -1,7 +1,7 @@
+use crate::Request;
 use mcp_core::{Access, AdapterError, AppAdapter, Operation};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, path::PathBuf, sync::Mutex};
-use studio_service::Request;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const DOCUMENT_ID: &str = "workspace";
@@ -111,7 +111,7 @@ impl AppAdapter for StudioAdapter {
 
     fn invoke(&self, name: &str, args: Value) -> Result<Value, AdapterError> {
         let invoke = |method: &str, args| {
-            studio_service::call(
+            crate::call(
                 &self.0,
                 &Request {
                     method: method.into(),
