@@ -30,6 +30,33 @@ Resource: `logic://workspace/ir`. Prompt: `explore_architecture`.
 
 The self-contained tool schemas define a deliberately small JSON Schema vocabulary; the server validates every keyword it emits and then deserializes typed Rust operations and validates graph semantics. It does not accept arbitrary external schemas or resolve remote references.
 
+## Phase 2 loopback Streamable HTTP
+
+Start Design Core for the same workspace, then launch the MCP bridge with the HTTP port:
+
+```sh
+LAS_WORKSPACE=/absolute/path/to/workspace target/debug/logic-mcp --http 8765
+```
+
+The endpoint is `http://127.0.0.1:8765/mcp`. Use port `0` for an OS-selected port and read the endpoint from stderr. The listener binds only to IPv4 loopback. rmcp checks the local Host and rejects browser Origin headers. HTTP workspace connections use read-only mode. Use stdio with `--allow-write` for workspace mutations. The isolated `--sample` mode can use explicit write access with either transport.
+
+Use the official MCP Inspector CLI to check discovery, list tools and call a tool:
+
+```sh
+npx @modelcontextprotocol/inspector@2.15.0 --cli \
+  --server-url http://127.0.0.1:8765/mcp --transport http \
+  --protocol-era modern --method initialize
+npx @modelcontextprotocol/inspector@2.15.0 --cli \
+  --server-url http://127.0.0.1:8765/mcp --transport http \
+  --protocol-era modern --method tools/list
+npx @modelcontextprotocol/inspector@2.15.0 --cli \
+  --server-url http://127.0.0.1:8765/mcp --transport http \
+  --protocol-era modern --method tools/call --tool-name revision.changes_since \
+  --tool-args-json '{"since_revision":0}'
+```
+
+Use `--protocol-era legacy` to check 2025-11-25 initialization. On 2026-11-17, Inspector 2.15.0 connected over both HTTP lifecycles, listed 45 tools and evaluated the default ALU to 7 for inputs 3 and 4. Inspector over stdio listed the same tools and read revision summaries. Loopback integration tests also checked local negotiation and rejection of foreign Host and Origin values. [Official Inspector CLI guide](https://github.com/modelcontextprotocol/inspector/blob/main/clients/cli/README.md)
+
 ## Phase 1 adapter and sample
 
 The transport-neutral `mcp-core` crate defines the `AppAdapter` contract, registers operations, validates inputs and enforces the write flag. The workspace adapter calls the existing Design Core command service. `core.get_app_info`, `core.get_capabilities`, `core.get_context`, `core.list_documents` and `core.get_operation_help` provide discovery and context. `core.get_document_state` accepts a listed document ID, a zero-based `offset` and a `limit` of 1–100. The workspace response pages nodes and edges at that offset. Each collection reports its total and next offset, and the response identifies the revision used.

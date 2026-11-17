@@ -47,6 +47,8 @@
 - 🟢 [Done] Native checkpoint-backup selection, validation, original-file archiving and restoration with persisted Undo/Redo; verified in the macOS app.
 - 🟢 [Done] Explicit valid-prefix move-log salvage: shared strict decoder stops at the first damaged frame, previews recovered moves/revision and excluded bytes, preserves originals and restores Undo/Redo; macOS restart/editing/panel QA in docs/RECOVERY.md.
 - 🟢 [Done] MCP foundation Phase 1. Transport-neutral AppAdapter and ToolRegistry, shared schema and access validation, structured errors, bounded document state, and a standalone in-memory SampleAdapter. Verified sample CRUD without Design Core and paged state over the real workspace bridge. See docs/MCP.md.
+- 🟢 [Done] MCP foundation Phase 2. rmcp Streamable HTTP on opt-in IPv4 loopback, with local Host and Origin enforcement and read-only workspace access. Inspector 2.15.0 verified connection, 45 tool definitions and simulation over both HTTP lifecycles, and tool discovery and revision summaries over stdio. See docs/MCP.md.
+- 🟠 [Next] MCP foundation Phase 3. Authenticated local access, scoped permissions and approval, rate limits and audit.
 - 🔴 [Later] SQLite Design Store, semantic diff, remote authenticated transport.
 
 ## UI / Rendering

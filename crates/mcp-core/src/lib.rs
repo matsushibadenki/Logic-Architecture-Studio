@@ -131,12 +131,12 @@ impl ToolRegistry {
         self.operations.contains_key(name)
     }
 
-    pub fn invoke(&self, name: &str, args: Value) -> Result<Value, AdapterError> {
+    pub fn check(&self, name: &str, args: &Value) -> Result<Access, AdapterError> {
         let operation = self
             .operations
             .get(name)
             .ok_or_else(|| AdapterError::new("unknown_tool", "Unknown tool"))?;
-        validate(&operation.input_schema, &args)
+        validate(&operation.input_schema, args)
             .map_err(|e| AdapterError::new("invalid_arguments", e))?;
         if operation.access == Access::Write && !self.write_enabled {
             return Err(AdapterError::new(
@@ -144,6 +144,11 @@ impl ToolRegistry {
                 "Launch with --allow-write to authorize editing and jobs.",
             ));
         }
+        Ok(operation.access)
+    }
+
+    pub fn invoke(&self, name: &str, args: Value) -> Result<Value, AdapterError> {
+        self.check(name, &args)?;
         match name {
             "core.get_app_info" => Ok(self.adapter.app_info()),
             "core.get_capabilities" => Ok(json!({
