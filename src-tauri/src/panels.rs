@@ -64,91 +64,66 @@ pub fn place(app: &tauri::AppHandle, id: &str, target: &str) -> Result<(), Strin
         .ok_or("Panel WebView missing")?;
     if target == "floating" {
         let label = format!("float-{id}");
-        let window = match app.get_window(&label) {
-            Some(w) => w,
+        let window = match app.get_webview_window(&label) {
+            Some(window) => window,
             None => {
-                let w = tauri::WindowBuilder::new(app, &label)
-                    .title(format!("Logic Studio · {id}"))
-                    .inner_size(420., 620.)
-                    .min_inner_size(300., 250.)
-                    .visible(false)
-                    .build()
-                    .map_err(|e| e.to_string())?;
-                // Mark this as a multi-WebView window before reparenting. On
-                // macOS Wry otherwise derives window sizes from the first
-                // reparented WebView, which still has its old docked bounds.
-                let anchor = w
-                    .add_child(
-                        tauri::WebviewBuilder::new(
-                            format!("anchor-{id}"),
-                            tauri::WebviewUrl::External("about:blank".parse().unwrap()),
-                        ),
-                        tauri::LogicalPosition::new(0., 0.),
-                        tauri::LogicalSize::new(1., 1.),
-                    )
-                    .map_err(|e| e.to_string())?;
-                anchor.hide().map_err(|e| e.to_string())?;
-                super::layout_store::restore(app, &w, id)?;
-                let a = app.clone();
+                let window = tauri::WebviewWindowBuilder::new(
+                    app,
+                    &label,
+                    tauri::WebviewUrl::App(format!("index.html?panel={id}&docked=1").into()),
+                )
+                .title(format!("Logic Studio · {id}"))
+                .inner_size(420., 620.)
+                .min_inner_size(300., 250.)
+                .visible(false)
+                .build()
+                .map_err(|e| e.to_string())?;
+                super::layout_store::restore(app, &window.as_ref().window(), id)?;
+                let app = app.clone();
                 let panel = id.to_string();
-                w.on_window_event(move |e| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = e {
+                window.on_window_event(move |event| match event {
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
                         api.prevent_close();
-                        let a = a.clone();
-                        let p = panel.clone();
+                        let app = app.clone();
+                        let panel = panel.clone();
                         std::thread::spawn(move || {
-                            let _ = place(&a, &p, "hidden");
-                        });
-                    } else if matches!(
-                        e,
-                        tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
-                    ) {
-                        let resized = if let tauri::WindowEvent::Resized(size) = e {
-                            Some(*size)
-                        } else {
-                            None
-                        };
-                        let a = a.clone();
-                        let p = panel.clone();
-                        std::thread::spawn(move || {
-                            if let Some(size) = resized {
-                                if let Some(web) = a.get_webview(&format!("panel-{p}")) {
-                                    let _ = web.set_bounds(tauri::Rect {
-                                        position: tauri::PhysicalPosition::new(0, 0).into(),
-                                        size: size.into(),
-                                    });
-                                }
-                                super::layout_store::capture_size(&a, &p, size);
-                            } else {
-                                super::layout_store::capture(&a, &p);
-                            }
-                            if let Err(e) = super::layout_store::save(&a) {
-                                eprintln!("Panel frame save: {e}");
+                            if let Err(error) = place(&app, &panel, "hidden") {
+                                eprintln!("Panel close: {error}");
                             }
                         });
                     }
+                    tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+                        let size = match event {
+                            tauri::WindowEvent::Resized(size) => Some(*size),
+                            _ => None,
+                        };
+                        let app = app.clone();
+                        let panel = panel.clone();
+                        std::thread::spawn(move || {
+                            if let Some(size) = size {
+                                super::layout_store::capture_size(&app, &panel, size);
+                            } else {
+                                super::layout_store::capture(&app, &panel);
+                            }
+                            if let Err(error) = super::layout_store::save(&app) {
+                                eprintln!("Panel frame save: {error}");
+                            }
+                        });
+                    }
+                    _ => {}
                 });
-                w
+                window
             }
         };
-        let size = window.inner_size().map_err(|e| e.to_string())?;
-        web.reparent(&window).map_err(|e| e.to_string())?;
-        web.set_bounds(tauri::Rect {
-            position: tauri::PhysicalPosition::new(0, 0).into(),
-            size: size.into(),
-        })
-        .map_err(|e| e.to_string())?;
-        web.show().map_err(|e| e.to_string())?;
+        web.hide().map_err(|e| e.to_string())?;
         window.show().map_err(|e| e.to_string())?;
         window.set_focus().map_err(|e| e.to_string())?;
     } else {
-        let home = app.get_window("workspace").ok_or("Workspace missing")?;
-        web.reparent(&home).map_err(|e| e.to_string())?;
         if target == "hidden" {
             web.hide().map_err(|e| e.to_string())?;
         }
         super::layout_store::capture(app, id);
-        if let Some(w) = app.get_window(&format!("float-{id}")) {
+        if let Some(w) = app.get_webview_window(&format!("float-{id}")) {
             w.hide().map_err(|e| e.to_string())?;
         }
     }
@@ -186,8 +161,8 @@ pub fn layout(app: &tauri::AppHandle, s: &Value, size: [u32; 2], scale: f64) -> 
         size[0].saturating_sub(left + right) as f32,
         size[1].saturating_sub(top + bh) as f32,
     ];
-    // Reparent holds Wry's window-id lock while awaiting the event loop.
-    // Never wait for that lock from a main-thread redraw.
+    // Placement can call into the main loop to show a floating window.
+    // Defer the layout until the placement transaction is finished.
     let panels = app.state::<Panels>();
     let Ok(_placement) = panels.placement.try_lock() else {
         return None;

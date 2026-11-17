@@ -138,16 +138,16 @@ async fn dock_panel(app: tauri::AppHandle, panel: String) -> Result<(), String> 
 }
 #[tauri::command]
 async fn gpu_view(app: tauri::AppHandle, root: tauri::State<'_, CoreRoot>) -> Result<(), String> {
-    if let Some(w) = app.get_window("gpu-circuit") {
+    if let Some(w) = app.get_webview_window("gpu-circuit") {
         return w.set_focus().map_err(|e| e.to_string());
     }
-    let window = Arc::new(
-        tauri::WindowBuilder::new(&app, "gpu-circuit")
-            .title("Circuit geometry · Rust / wgpu")
-            .inner_size(1100., 720.)
-            .build()
-            .map_err(|e| e.to_string())?,
-    );
+    let host = tauri::WebviewWindowBuilder::new(&app, "gpu-circuit", surface_url())
+        .title("Circuit geometry · Rust / wgpu")
+        .inner_size(1100., 720.)
+        .build()
+        .map_err(|e| e.to_string())?;
+    host.as_ref().hide().map_err(|e| e.to_string())?;
+    let window = Arc::new(host.as_ref().window());
     let size = window.inner_size().map_err(|e| e.to_string())?;
     let renderer = Arc::new(Mutex::new(studio_renderer::Renderer::new(
         window.clone(),
@@ -202,6 +202,10 @@ async fn gpu_view(app: tauri::AppHandle, root: tauri::State<'_, CoreRoot>) -> Re
     });
     Ok(())
 }
+fn surface_url() -> tauri::WebviewUrl {
+    tauri::WebviewUrl::App("index.html?surface=1".into())
+}
+
 fn main() {
     let mut context = tauri::generate_context!();
     context.config_mut().app.windows.clear();
@@ -296,11 +300,13 @@ fn main() {
             app.manage(measurement::Trace::default());
             let (wake, receiver) = std::sync::mpsc::sync_channel(1);
             app.manage(sync::Wake(wake));
-            let window = tauri::WindowBuilder::new(app, "workspace")
+            let host = tauri::WebviewWindowBuilder::new(app, "workspace", surface_url())
                 .title("Logic Architecture Studio")
                 .inner_size(1440., 900.)
                 .min_inner_size(800., 540.)
                 .build()?;
+            host.as_ref().hide()?;
+            let window = host.as_ref().window();
             let size = window.inner_size()?;
             let renderer =
                 studio_renderer::Renderer::new(Arc::new(window.clone()), size.width, size.height)
