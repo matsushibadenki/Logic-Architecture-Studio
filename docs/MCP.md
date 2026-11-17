@@ -30,6 +30,42 @@ Resource: `logic://workspace/ir`. Prompt: `explore_architecture`.
 
 The self-contained tool schemas define a deliberately small JSON Schema vocabulary; the server validates every keyword it emits and then deserializes typed Rust operations and validates graph semantics. It does not accept arbitrary external schemas or resolve remote references.
 
+## SSH access and circuit updates (Phase 6)
+
+Start MCP in **Preferences → MCP** on the Mac and note the local port. From a separate device with an authorized SSH account on that Mac, open a local forward using the same port at both ends. OpenSSH encrypts the connection and verifies the Mac's SSH host key. The MCP endpoint is still bound to IPv4 loopback, so the only network-facing service in this setup is the existing SSH service. [OpenSSH local forwarding](https://man.openbsd.org/ssh)
+
+```sh
+port=8765 # Replace with the port displayed in Preferences.
+ssh -NT -o ExitOnForwardFailure=yes \
+  -L "127.0.0.1:${port}:127.0.0.1:${port}" user@mac-host
+```
+
+On the client device, configure Inspector with `http://127.0.0.1:${port}/mcp` and the Bearer token from Preferences. Use the same port on both ends so the existing Host check continues to apply. Tunnel access requires both SSH authentication and the MCP token. MCP still applies the selected scopes and review decisions from the Mac. Restarting the MCP server issues a fresh token and may select a new port.
+
+For notifications, use the modern MCP protocol (2026-07-28) and subscribe to `logic://workspace/ir` with `subscriptions/listen`. The first `notifications/resources/updated` is a synchronization marker. Further updates are sent when the committed circuit revision changes, including GUI Undo. The server checks the revision every 750 ms while subscribed and can coalesce edits between checks. A notification identifies the resource. Fetch `revision.changes_since` with the last observed revision to retrieve the intervening summaries, or refresh the document if the history window was exceeded. After reconnecting, use the same catch-up sequence. The subscription limit is 16 per bridge.
+
+With Inspector 2.15.0, this command listens for updates for 30 seconds while you edit the circuit on the Mac:
+
+```sh
+npx @modelcontextprotocol/inspector@2.15.0 --cli \
+  --server-url "http://127.0.0.1:${port}/mcp" --transport http \
+  --header "Authorization: Bearer $MCP_TOKEN" --protocol-era modern \
+  --method tools/call --load --load-subscribe logic://workspace/ir \
+  --load-duration 30 --format json
+```
+
+Verified on one Mac using an isolated OpenSSH server and Inspector over an IPv6 loopback tunnel forwarding to the desktop's IPv4 listener. Missing credentials were rejected, read-only operations succeeded, a call without the session scope was denied, and a patch applied after in-app review and approval. Inspector reported 3 notifications delivered and 0 missed for initial sync, patch application, and GUI Undo. Verification from a separate physical device is pending.
+
+## Review, verify, and undo (Phase 5)
+
+1. Call `core.list_documents`, then `core.get_document_state` with the returned `document_id`. The response contains the document revision and bounded pages of nodes and wires.
+2. Call `design.propose_patch` with that `expected_revision`, a label, the operations, and `"compact":true`. The preview returns the changed nodes and wires with before/after values, including wires removed as a consequence of removing a node. The working circuit remains at its original revision. Omitting `compact` keeps the full-document preview.
+3. Send the same patch to `design.apply_patch` without `compact`. In **Preferences → MCP → Write approvals**, open the request and review the semantic diff and any diagnostics. The desktop bridge regenerates the diff when approving, and the core checks the base revision again during application. After approval, retry the exact apply request.
+4. Call `verify.run_tests` with `expected_revision` set to the applied revision. Review and approve the verification request, then retry it. Use `verify.get_result` to read the latest report with read scope. The status is `not_run`, `current`, or `stale` and the report carries the tested revision.
+5. Click **Undo** in the macOS editor. Undo restores the previous circuit and advances the revision. Refresh it with `core.get_document_state` and check the entry with `revision.changes_since`. The previous verification report is retained as stale.
+
+Verified on macOS with Inspector 2.15.0. A proposal at revision 0 renamed and moved the ADD node. The compact preview and the in-app preview matched. Approval and retry produced revision 1, and all 320 ALU vectors passed. Undo restored the original name and position in the GPU canvas, and Inspector returned the original nodes and wires at revision 2. Inspector reported the revision 1 verification as stale and rejected a new preview based on revision 0.
+
 ## Desktop MCP settings (Phase 4)
 
 Open **Preferences → MCP**. A workspace contains one circuit document, including its module definitions. Select **Publish** for the named circuit. Reading is included with publication. Enable simulation access or write requests as needed, then select **Start**. The app starts a loopback server on an available port and creates a new Bearer token. Copy the URL and reveal the token only when configuring a local client. The publishing and scope choices are stored per workspace. The server always starts stopped when the application opens.

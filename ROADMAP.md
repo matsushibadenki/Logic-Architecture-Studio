@@ -50,7 +50,11 @@
 - 🟢 [Done] MCP foundation Phase 2. rmcp Streamable HTTP on opt-in IPv4 loopback, with local Host and Origin enforcement and read-only workspace access by default. Inspector 2.15.0 verified connection, 45 tool definitions and simulation over both HTTP lifecycles, and tool discovery and revision summaries over stdio. See docs/MCP.md.
 - 🟢 [Done] MCP foundation Phase 3. Loopback bearer authentication, credential-bound legacy sessions, tool scopes, separate one-time write approval, per-client rate limits and redacted audit logs. Inspector 2.15.0 verified permitted and rejected calls, approved edits and stdio compatibility. See docs/MCP.md.
 - 🟢 [Done] MCP foundation Phase 4. Tauri Preferences manages loopback start/stop, publication of the current workspace document, client scopes, and in-app write approvals. Verified macOS approval and denial with Inspector 2.15.0, including the approved rename and move appearing on the GPU canvas without reopening the workspace. See docs/MCP.md.
-- 🔴 [Later] SQLite Design Store, semantic diff, remote authenticated transport.
+- 🟢 [Done] MCP foundation Phase 5. Revision-checked circuit preview, macOS review of changed nodes and wires, approved edits, and revision-tagged verification reports. Verified with Inspector 2.15.0 and the native macOS GPU canvas, including GUI Undo, restored nodes and wires, and stale verification status. See docs/MCP.md.
+- 🟢 [Done] MCP foundation Phase 6 (initial slice). SSH-forwarded Streamable HTTP with existing Bearer scopes and desktop approval, and revision-change notifications through MCP resource subscriptions. Inspector 2.15.0 verified the SSH path, scope denial, app approval, and delivery of the initial sync, approved edit, and GUI Undo notifications on one Mac.
+- ⭕️ [Pending] Phase 6 cross-device verification. Repeat the SSH, scope, approval, and notification workflow from Inspector on a separate physical device once an authorized test endpoint is available.
+- 🔴 [Later] Phase 6 direct remote deployment with OAuth, long-running MCP tasks, MCP Apps, and multi-app management.
+- 🔴 [Later] SQLite Design Store and revision comparison beyond the current patch preview.
 
 ## UI / Rendering
 

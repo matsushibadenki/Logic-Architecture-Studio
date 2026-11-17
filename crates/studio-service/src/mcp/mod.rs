@@ -1,7 +1,7 @@
 use mcp_core::{Access, AdapterError, AppAdapter, ToolRegistry};
 use rmcp::{
     model::*,
-    service::{RequestContext, RoleServer},
+    service::{RequestContext, RoleServer, SubscriptionContext},
     transport::{
         async_rw::AsyncRwTransport,
         streamable_http_server::{
@@ -27,6 +27,7 @@ struct StudioMcp {
     sample: bool,
     security: Option<Arc<Security>>,
     on_change: Option<Arc<dyn Fn() + Send + Sync>>,
+    subscriptions: Arc<tokio::sync::Semaphore>,
 }
 
 impl StudioMcp {
@@ -50,13 +51,26 @@ impl ServerHandler for StudioMcp {
         } else {
             (
                 "logic-architecture-studio",
-                builder.enable_resources().enable_prompts().build(),
+                builder.enable_resources().enable_resources_subscribe().enable_prompts().build(),
                 "Inspect revision, propose patches, then apply with expected_revision. Writes require --allow-write. Candidate adoption is GUI-only.",
             )
         };
         ServerConfig::new(capabilities)
             .with_server_info(Implementation::new(name, env!("CARGO_PKG_VERSION")))
             .with_instructions(instructions)
+    }
+
+    async fn initialize(
+        &self,
+        request: InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<InitializeResult, ErrorData> {
+        context.peer.set_peer_info(request.clone());
+        let mut result = self.negotiate_initialize(&request)?;
+        if let Some(resources) = &mut result.capabilities.resources {
+            resources.subscribe = None;
+        }
+        Ok(result)
     }
 
     async fn list_tools(
@@ -190,6 +204,67 @@ impl ServerHandler for StudioMcp {
         })
     }
 
+    fn accepted_subscription_filter(&self, _: &SubscriptionFilter) -> Option<SubscriptionFilter> {
+        if self.sample {
+            return None;
+        }
+        let mut filter = SubscriptionFilter::new();
+        filter.resource_subscriptions = Some(vec![IR_URI.into()]);
+        Some(filter)
+    }
+
+    async fn listen(&self, context: SubscriptionContext) -> Result<(), ErrorData> {
+        if self.security.is_some()
+            && !context
+                .request_context()
+                .extensions
+                .get::<axum::http::request::Parts>()
+                .and_then(|parts| parts.extensions.get::<Principal>())
+                .is_some_and(|principal| principal.permits(Access::Read))
+        {
+            return Err(ErrorData::invalid_params("Read scope required", None));
+        }
+        if context.accepted().resource_subscriptions.is_none() {
+            return Ok(());
+        }
+        let _permit = self.subscriptions.try_acquire().map_err(|_| {
+            ErrorData::internal_error(
+                "Too many active subscriptions",
+                Some(json!({"code":"subscription_limit"})),
+            )
+        })?;
+        let mut revision = None;
+        let mut cadence = tokio::time::interval(std::time::Duration::from_millis(750));
+        cadence.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                _ = context.cancelled() => return Ok(()),
+                _ = cadence.tick() => {}
+            }
+            let result = self
+                .execute(
+                    "revision.changes_since".into(),
+                    json!({"since_revision":revision.unwrap_or(0)}),
+                )
+                .await
+                .map_err(|error| {
+                    ErrorData::internal_error(error.message, Some(json!({"code":error.code})))
+                })?;
+            let current = result["revision"].as_u64().ok_or_else(|| {
+                ErrorData::internal_error("Design Core did not return a revision", None)
+            })?;
+            if revision.replace(current) != Some(current)
+                && context
+                    .sink()
+                    .notify_resource_updated(IR_URI)
+                    .await
+                    .is_err()
+            {
+                return Ok(());
+            }
+        }
+    }
+
     async fn list_resources(
         &self,
         _: Option<PaginatedRequestParams>,
@@ -291,6 +366,7 @@ fn bridge(
         sample,
         security: None,
         on_change: None,
+        subscriptions: Arc::new(tokio::sync::Semaphore::new(16)),
     })
 }
 
