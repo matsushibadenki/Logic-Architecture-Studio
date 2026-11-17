@@ -133,8 +133,8 @@ impl ServerHandler for StudioMcp {
                             Some(&id),
                         ));
                     }
-                    Ok(Decision::Denied) => {
-                        let _ = record("approval_denied", None);
+                    Ok(Decision::Denied(id)) => {
+                        let _ = record("approval_denied", Some(&id));
                         return Ok(tool_error(
                             "approval_denied",
                             "Write approval was denied",
@@ -180,10 +180,7 @@ impl ServerHandler for StudioMcp {
                 result.content = vec![text];
                 result.into()
             }
-            Err(error) => CallToolResult::structured_error(
-                json!({"error":{"code":error.code,"message":error.message}}),
-            )
-            .into(),
+            Err(error) => tool_error(error.code, &error.message, None),
         })
     }
 
@@ -261,7 +258,7 @@ fn tool_error(code: &str, message: &str, approval_id: Option<&str>) -> CallToolR
     if let Some(id) = approval_id {
         error["approval_id"] = json!(id);
     }
-    CallToolResult::structured_error(json!({"error": error})).into()
+    CallToolResult::structured_error(json!({"result": null, "error": error})).into()
 }
 
 #[tokio::main(flavor = "current_thread")]

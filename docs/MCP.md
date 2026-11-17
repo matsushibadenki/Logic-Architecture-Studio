@@ -30,32 +30,84 @@ Resource: `logic://workspace/ir`. Prompt: `explore_architecture`.
 
 The self-contained tool schemas define a deliberately small JSON Schema vocabulary; the server validates every keyword it emits and then deserializes typed Rust operations and validates graph semantics. It does not accept arbitrary external schemas or resolve remote references.
 
-## Phase 2 loopback Streamable HTTP
+## Local Streamable HTTP and access control
 
-Start Design Core for the same workspace, then launch the MCP bridge with the HTTP port:
-
-```sh
-LAS_WORKSPACE=/absolute/path/to/workspace target/debug/logic-mcp --http 8765
-```
-
-The endpoint is `http://127.0.0.1:8765/mcp`. Use port `0` for an OS-selected port and read the endpoint from stderr. The listener binds only to IPv4 loopback. rmcp checks the local Host and rejects browser Origin headers. HTTP workspace connections use read-only mode. Use stdio with `--allow-write` for workspace mutations. The isolated `--sample` mode can use explicit write access with either transport.
-
-Use the official MCP Inspector CLI to check discovery, list tools and call a tool:
+Start Design Core for the same workspace. Create a private security directory owned by the account running the bridge. Use one independently generated 32-byte token per client. Put the original 64-character hexadecimal token in the client's secret store and put only its SHA-256 digest in the server configuration.
 
 ```sh
-npx @modelcontextprotocol/inspector@2.15.0 --cli \
-  --server-url http://127.0.0.1:8765/mcp --transport http \
-  --protocol-era modern --method initialize
-npx @modelcontextprotocol/inspector@2.15.0 --cli \
-  --server-url http://127.0.0.1:8765/mcp --transport http \
-  --protocol-era modern --method tools/list
-npx @modelcontextprotocol/inspector@2.15.0 --cli \
-  --server-url http://127.0.0.1:8765/mcp --transport http \
-  --protocol-era modern --method tools/call --tool-name revision.changes_since \
-  --tool-args-json '{"since_revision":0}'
+umask 077
+mkdir -m 700 /absolute/path/to/mcp-security
+# Generate each credential separately. Save the original token in the client secret store.
+token=$(openssl rand -hex 32)
+printf '%s' "$token" | shasum -a 256
+unset token
 ```
 
-Use `--protocol-era legacy` to check 2025-11-25 initialization. On 2026-11-17, Inspector 2.15.0 connected over both HTTP lifecycles, listed 45 tools and evaluated the default ALU to 7 for inputs 3 and 4. Inspector over stdio listed the same tools and read revision summaries. Loopback integration tests also checked local negotiation and rejection of foreign Host and Origin values. [Official Inspector CLI guide](https://github.com/modelcontextprotocol/inspector/blob/main/clients/cli/README.md)
+Create `clients.json` in this directory with mode `0600`. Substitute each placeholder with the corresponding lowercase SHA-256 digest of the token text without a trailing newline.
+
+```json
+{
+  "requests_per_minute": 120,
+  "clients": [
+    {"id": "reader", "token_sha256": "<reader hash>", "scopes": ["read"]},
+    {"id": "editor", "token_sha256": "<editor hash>", "scopes": ["read", "session", "write"]},
+    {"id": "operator", "token_sha256": "<operator hash>", "scopes": ["approve"]}
+  ]
+}
+```
+
+```sh
+LAS_WORKSPACE=/absolute/path/to/workspace target/debug/logic-mcp \
+  --http 8765 --http-security /absolute/path/to/mcp-security
+```
+
+The endpoint is `http://127.0.0.1:8765/mcp`. Use port `0` for an OS-selected port reported on stderr. The listener binds to IPv4 loopback and checks Host and Origin before authenticating every request. Legacy session IDs are bound to the client that initialized them. Restart the bridge after changing credentials or scopes. Restarting also invalidates open sessions and outstanding approvals.
+
+- `read` grants inspection, discovery and retrieval of existing results.
+- `session` grants operations that update the workspace's simulation results or selected cycle.
+- `write` grants access to request approval for workspace edits and other write tools, including starting or cancelling jobs. Launch the bridge with `--allow-write` to enable these operations.
+- `approve` is reserved for operator endpoints and must be the credential's only scope. Every MCP client credential must have `read`.
+
+The limit defaults to 120 HTTP requests per minute per credential, including initialization and session traffic. Failed authentication attempts share a separate counter. A request above the limit receives HTTP 429 and `Retry-After`. Each limit is a fixed 60-second window.
+
+### Verify with MCP Inspector
+
+Load the client's token into `MCP_TOKEN` from its secret store and pass it in the Authorization header. Omit the header to confirm that unauthenticated connections are rejected.
+
+```sh
+npx @modelcontextprotocol/inspector@2.15.0 --cli \
+  --server-url http://127.0.0.1:8765/mcp --transport http \
+  --header "Authorization: Bearer $MCP_TOKEN" --protocol-era modern --method tools/list
+npx @modelcontextprotocol/inspector@2.15.0 --cli \
+  --server-url http://127.0.0.1:8765/mcp --transport http \
+  --header "Authorization: Bearer $MCP_TOKEN" --protocol-era modern \
+  --method tools/call --tool-name revision.changes_since --tool-args-json '{"since_revision":0}'
+```
+
+Use `--protocol-era legacy` to exercise the 2025-11-25 session lifecycle. A read-only credential calling a session or write tool receives the structured `permission_denied` error. [Official Inspector CLI guide](https://github.com/modelcontextprotocol/inspector/blob/main/clients/cli/README.md)
+
+### Approve a write
+
+Call the write tool using the editor credential. The structured `approval_required` response contains an `approval_id`. Use a distinct operator credential to view the exact arguments and approve or deny. Keep the operator credential in the operator's secret store.
+
+```sh
+base=http://127.0.0.1:8765
+curl --fail -H "Authorization: Bearer $MCP_APPROVER_TOKEN" "$base/approvals/$APPROVAL_ID"
+curl --fail -X POST -H "Authorization: Bearer $MCP_APPROVER_TOKEN" \
+  "$base/approvals/$APPROVAL_ID/approve"
+```
+
+Use `/deny` instead of `/approve` to reject the request. After approval, retry the same tool with the same arguments and editor credential within 120 seconds of creating the approval. Changing an argument, including `expected_revision` where present, requires a fresh approval. Matching an approval consumes it before execution. Workspace revision checks still apply. At most 16 approval requests are retained in memory.
+
+### Audit and stdio
+
+The private security directory holds `audit.jsonl` and one rotated file, `audit.previous.jsonl`. Rotation occurs at approximately 1 MiB per file. Entries identify the client, operation, outcome, duration and applicable revision or approval ID. Tokens, request arguments and results are excluded. Approval decisions and the start of a privileged operation must be recorded before they take effect.
+
+The stdio transport still starts without HTTP configuration and uses its existing `--allow-write` policy. To exercise stdio in Inspector, use `--method tools/list -- /absolute/path/to/target/debug/logic-mcp` with `LAS_WORKSPACE` set for the Design Core process and the bridge.
+
+### Phase 3 verification
+
+Inspector 2.15.0 listed 45 tools over authenticated HTTP and stdio, and read the same workspace over legacy HTTP. In an isolated workspace, a read-only credential could not run a simulation or edit, an editor could not approve its own request, and an operator-approved edit advanced revision 0 to 1. A changed argument required a separate approval, an explicit denial blocked execution, and replay required a fresh approval. The rate-limited credential received HTTP 429 with `Retry-After` while another credential could still list tools. The audit log recorded decisions and results without credential or argument contents. A stdio call retrieved the resulting revision summary. The loopback integration test also verifies rejection of foreign hosts, browser origins, invalid credentials and another client's legacy session ID.
 
 ## Phase 1 adapter and sample
 

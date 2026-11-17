@@ -1,9 +1,10 @@
 use axum::{
     extract::{Extension, Path as RoutePath, Request, State},
-    http::{header, StatusCode},
+    http::{header, HeaderValue, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use hmac::{Hmac, Mac};
 use mcp_core::Access;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -110,7 +111,7 @@ struct Approval {
 pub enum Decision {
     Allowed(String),
     Pending(String),
-    Denied,
+    Denied(String),
 }
 
 pub struct Security {
@@ -120,6 +121,7 @@ pub struct Security {
     unauthenticated: Mutex<Rate>,
     audit: Mutex<Audit>,
     hosts: [String; 2],
+    session_key: [u8; 32],
     _owner: File,
 }
 
@@ -210,6 +212,8 @@ impl Security {
                 rate: Mutex::new(Rate::default()),
             });
         }
+        let mut session_key = [0; 32];
+        getrandom::fill(&mut session_key)?;
         Ok(Self {
             clients,
             approvals: Mutex::new(Vec::new()),
@@ -220,8 +224,18 @@ impl Security {
                 file: open_private(&dir.join("audit.jsonl"), true)?,
             }),
             hosts,
+            session_key,
             _owner: owner,
         })
+    }
+
+    fn session_tag(&self, who: &Principal, id: &str) -> String {
+        let mut mac =
+            Hmac::<Sha256>::new_from_slice(&self.session_key).expect("HMAC accepts a 32-byte key");
+        mac.update(who.id.as_bytes());
+        mac.update(b":");
+        mac.update(id.as_bytes());
+        format!("{:x}", mac.finalize().into_bytes())
     }
 
     pub fn approval(
@@ -240,7 +254,7 @@ impl Security {
             let approval = &approvals[index];
             return Ok(match approval.decision {
                 Some(true) => Decision::Allowed(approvals.swap_remove(index).id),
-                Some(false) => Decision::Denied,
+                Some(false) => Decision::Denied(approval.id.clone()),
                 None => Decision::Pending(approval.id.clone()),
             });
         }
@@ -322,7 +336,8 @@ pub async fn authenticate(
     let token = headers
         .next()
         .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.strip_prefix("Bearer "));
+        .and_then(|h| h.split_once(' '))
+        .and_then(|(scheme, value)| scheme.eq_ignore_ascii_case("bearer").then_some(value));
     let credential = token
         .filter(|t| {
             headers.next().is_none() && t.len() == 64 && t.bytes().all(|b| b.is_ascii_hexdigit())
@@ -360,9 +375,50 @@ pub async fn authenticate(
         );
         return StatusCode::FORBIDDEN.into_response();
     }
+    const SESSION: &str = "mcp-session-id";
+    if let Some(header) = request.headers().get(SESSION) {
+        let session = header
+            .to_str()
+            .ok()
+            .and_then(|value| value.rsplit_once('.'));
+        let Some((id, _)) = session.filter(|(id, tag)| {
+            bool::from(
+                security
+                    .session_tag(principal, id)
+                    .as_bytes()
+                    .ct_eq(tag.as_bytes()),
+            )
+        }) else {
+            let _ = security.record(
+                Some(principal),
+                "http",
+                "session_denied",
+                None,
+                None,
+                Duration::ZERO,
+            );
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        let Ok(internal) = HeaderValue::from_str(id) else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        request.headers_mut().insert(SESSION, internal);
+    }
     request.headers_mut().remove(header::AUTHORIZATION);
     request.extensions_mut().insert(principal.clone());
-    next.run(request).await
+    let mut response = next.run(request).await;
+    if let Some(id) = response
+        .headers()
+        .get(SESSION)
+        .and_then(|id| id.to_str().ok())
+    {
+        let signed = format!("{id}.{}", security.session_tag(principal, id));
+        response.headers_mut().insert(
+            SESSION,
+            HeaderValue::from_str(&signed).expect("valid signed session ID"),
+        );
+    }
+    response
 }
 
 fn check_rate(
