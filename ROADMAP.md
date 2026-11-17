@@ -54,7 +54,9 @@
 - 🟢 [Done] MCP foundation Phase 6 (initial slice). SSH-forwarded Streamable HTTP with existing Bearer scopes and desktop approval, and revision-change notifications through MCP resource subscriptions. Inspector 2.15.0 verified the SSH path, scope denial, app approval, and delivery of the initial sync, approved edit, and GUI Undo notifications on one Mac.
 - ⭕️ [Pending] Phase 6 cross-device verification. Repeat the SSH, scope, approval, and notification workflow from Inspector on a separate physical device once an authorized test endpoint is available.
 - 🔴 [Later] Phase 6 direct remote deployment with OAuth, long-running MCP tasks, MCP Apps, and multi-app management.
-- 🔴 [Later] SQLite Design Store and revision comparison beyond the current patch preview.
+- 🟢 [Done] Circuit review of the immediately preceding revision in Results → History and through MCP. Shows changed nodes, wires and shared module definitions, including reversed changes after Undo and forward changes after Redo.
+- 🟢 [Done] Compare any two retained revisions in Results → History and via MCP. Durable snapshots keep circuit and shared-module changes available after reopening, including Undo branches and replayed moves.
+- 🔴 [Later] SQLite Design Store and longer-term revision archives.
 
 ## UI / Rendering
 

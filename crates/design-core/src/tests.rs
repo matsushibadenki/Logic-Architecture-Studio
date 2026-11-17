@@ -516,3 +516,62 @@ fn gate_truth_tables_and_bitwise_widths() {
         }
     }
 }
+
+#[test]
+fn compact_revision_diff_tracks_nested_changes_undo_redo_and_stale_requests() {
+    let mut workspace = Workspace::default();
+    let mut doc = (*workspace.document).clone();
+    doc.modules.insert(
+        "child".into(),
+        Arc::new(ModuleDefinition {
+            nodes: doc.nodes.clone(),
+            edges: doc.edges.clone(),
+        }),
+    );
+    workspace.commit(doc, "Add child".into(), "gui");
+
+    let mut doc = (*workspace.document).clone();
+    Arc::make_mut(doc.modules.get_mut("child").unwrap())
+        .nodes
+        .update("add", |node| node.name = "sum".into())
+        .unwrap();
+    workspace.commit(doc, "Edit child".into(), "gui");
+    let compare = |workspace: &mut Workspace, revision| {
+        workspace.dispatch(
+            "revision.diff",
+            json!({"compact":true,"expected_revision":revision}),
+            "test",
+        )
+    };
+    let edit = compare(&mut workspace, 2).unwrap();
+    assert_eq!(edit["from_revision"], 1);
+    assert_eq!(edit["nodes"], json!([]));
+    assert_eq!(edit["modules"][0]["nodes"][0]["before"]["name"], "add");
+    assert_eq!(edit["modules"][0]["nodes"][0]["after"]["name"], "sum");
+
+    workspace
+        .dispatch("design.undo", json!({"expected_revision":2}), "gui")
+        .unwrap();
+    assert!(compare(&mut workspace, 2).is_err());
+    let undo = compare(&mut workspace, 3).unwrap();
+    assert_eq!(undo["from_revision"], 2);
+    assert_eq!(undo["modules"][0]["nodes"][0]["before"]["name"], "sum");
+    assert_eq!(undo["modules"][0]["nodes"][0]["after"]["name"], "add");
+
+    workspace
+        .dispatch("design.redo", json!({"expected_revision":3}), "gui")
+        .unwrap();
+    let redo = compare(&mut workspace, 4).unwrap();
+    assert_eq!(redo["modules"][0]["nodes"][0]["after"]["name"], "sum");
+}
+
+#[test]
+fn compact_revision_diff_without_history_returns_unavailable() {
+    let mut workspace = Workspace::default();
+    assert_eq!(
+        workspace
+            .dispatch("revision.diff", json!({"compact":true}), "test")
+            .unwrap(),
+        json!({"available":false, "revision":0}),
+    );
+}

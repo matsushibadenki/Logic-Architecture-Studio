@@ -2867,3 +2867,30 @@ html.toolbar-document,
 .mcp-diff-entry ins {
   font-weight: 600;
 }
+
+.revision-comparison {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding-block: 4px 10px;
+}
+.revision-comparison .mcp-diff {
+  width: 100%;
+}
+
+.revision-comparison-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+  max-width: 100%;
+}
+.revision-comparison-controls > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.revision-comparison-controls select {
+  min-width: 0;
+  max-width: min(190px, 100%);
+}

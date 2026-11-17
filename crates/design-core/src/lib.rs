@@ -35,6 +35,37 @@ where
     result
 }
 
+fn preview_changes(before: &Document, after: &Document, revision: u64, label: &str) -> Value {
+    let modules = before
+        .modules
+        .keys()
+        .chain(after.modules.keys())
+        .collect::<std::collections::BTreeSet<_>>();
+    let empty_nodes = entities::Entities::from(Vec::new());
+    let empty_edges = entities::Entities::from(Vec::new());
+    let modules: Vec<_> = modules.into_iter().filter_map(|name| {
+        let old = before.modules.get(name);
+        let new = after.modules.get(name);
+        if old == new {
+            return None;
+        }
+        Some(json!({
+            "name": name,
+            "status": if old.is_none() { "added" } else if new.is_none() { "removed" } else { "modified" },
+            "nodes": preview_entities(old.map_or(&empty_nodes, |m| &m.nodes), new.map_or(&empty_nodes, |m| &m.nodes)),
+            "edges": preview_entities(old.map_or(&empty_edges, |m| &m.edges), new.map_or(&empty_edges, |m| &m.edges)),
+        }))
+    }).collect();
+    json!({
+        "revision": revision, "label": label,
+        "nodes": preview_entities(&before.nodes, &after.nodes),
+        "edges": preview_entities(&before.edges, &after.edges),
+        "modules": modules,
+        "document_name": (before.name != after.name).then(|| json!({"before":before.name, "after":after.name})),
+        "diagnostics": after.diagnostics(),
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
@@ -80,6 +111,8 @@ pub struct Revision {
     pub revision: u64,
     pub label: String,
     pub actor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    restored_by_undo: Option<bool>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TestVector {
@@ -134,6 +167,30 @@ fn encoded_size(value: &impl Serialize) -> usize {
         count.0
     }
 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RevisionSnapshot {
+    revision: u64,
+    document: Arc<Document>,
+    #[serde(skip)]
+    encoded_bytes: usize,
+}
+
+impl RevisionSnapshot {
+    fn new(revision: u64, document: &Arc<Document>) -> Self {
+        Self {
+            revision,
+            document: document.clone(),
+            encoded_bytes: document.encoded_len(),
+        }
+    }
+}
+
+impl PartialEq for RevisionSnapshot {
+    fn eq(&self, other: &Self) -> bool {
+        self.revision == other.revision && self.document == other.document
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Workspace {
     pub schema: u32,
@@ -142,6 +199,8 @@ pub struct Workspace {
     pub history: Vec<Revision>,
     pub undo: Vec<Arc<Document>>,
     pub redo: Vec<Arc<Document>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    revision_snapshots: Option<Vec<RevisionSnapshot>>,
     pub report: Option<TestReport>,
     pub experiments: Vec<Experiment>,
     pub selected: Option<String>,
@@ -171,6 +230,7 @@ impl Default for Workspace {
             history: vec![],
             undo: vec![],
             redo: vec![],
+            revision_snapshots: None,
             report: None,
             experiments: vec![],
             selected: Some("add".into()),
@@ -342,19 +402,104 @@ impl Workspace {
                 .iter()
                 .enumerate()
                 .all(|(index, event)| event.revision == since + index as u64 + 1);
+        let changes: Vec<_> = (if contiguous { events } else { &[] })
+            .iter()
+            .map(|event| json!({"revision":event.revision,"label":event.label,"actor":event.actor}))
+            .collect();
         Ok(json!({
             "revision": self.revision,
             "resync_required": !contiguous,
-            "changes": if contiguous { events } else { &[] },
+            "changes": changes,
         }))
     }
 
-    fn record(&mut self, label: String, actor: &str) {
+    // Older checkpoints did not identify individual Undo snapshots. Only
+    // recover entries whose chronological position can be established.
+    fn legacy_revision_snapshots(&self) -> Vec<RevisionSnapshot> {
+        let mut snapshots = Vec::new();
+        let mut undo = self.undo.iter().rev();
+        let mut expected = self.revision;
+        for event in self.history.iter().rev() {
+            if event.revision != expected || expected == 0 {
+                break;
+            }
+            if event.label == "design.undo" && event.restored_by_undo != Some(false) {
+                if expected == self.revision {
+                    if let Some(document) = self.redo.last() {
+                        snapshots.push(RevisionSnapshot::new(expected - 1, document));
+                    }
+                }
+                break;
+            }
+            if event.label == "design.redo" {
+                if expected == self.revision {
+                    if let Some(document) = undo.next() {
+                        snapshots.push(RevisionSnapshot::new(expected - 1, document));
+                    }
+                }
+                break;
+            }
+            let Some(document) = undo.next() else { break };
+            expected -= 1;
+            snapshots.push(RevisionSnapshot::new(expected, document));
+        }
+        snapshots.reverse();
+        snapshots
+    }
+
+    fn archived_revisions(&self) -> std::borrow::Cow<'_, [RevisionSnapshot]> {
+        match &self.revision_snapshots {
+            Some(entries) => std::borrow::Cow::Borrowed(entries),
+            None => std::borrow::Cow::Owned(self.legacy_revision_snapshots()),
+        }
+    }
+
+    fn retain_current_revision(&mut self) {
+        if self.revision_snapshots.is_none() {
+            self.revision_snapshots = Some(self.legacy_revision_snapshots());
+        }
+        let snapshots = self.revision_snapshots.as_mut().unwrap();
+        snapshots.push(RevisionSnapshot::new(self.revision, &self.document));
+        let mut bytes = 0usize;
+        let count = snapshots
+            .iter_mut()
+            .rev()
+            .take(100)
+            .map(|entry| {
+                if entry.encoded_bytes == 0 {
+                    entry.encoded_bytes = entry.document.encoded_len();
+                }
+                bytes = bytes.saturating_add(entry.encoded_bytes);
+                bytes
+            })
+            .take_while(|bytes| *bytes <= 16 * 1024 * 1024)
+            .count();
+        snapshots.drain(..snapshots.len() - count);
+    }
+
+    pub fn revision_snapshot_list(&self) -> Value {
+        let past = self.archived_revisions();
+        let revisions: Vec<_> = std::iter::once(self.revision)
+            .chain(past.iter().rev().map(|entry| entry.revision))
+            .map(|revision| {
+                let label = self
+                    .history
+                    .iter()
+                    .find(|event| event.revision == revision)
+                    .map(|event| event.label.as_str());
+                json!({"revision": revision, "label": label})
+            })
+            .collect();
+        json!({"revision": self.revision, "snapshots": revisions})
+    }
+
+    fn record(&mut self, label: String, actor: &str, restored_by_undo: bool) {
         self.revision += 1;
         self.history.push(Revision {
             revision: self.revision,
             label,
             actor: actor.into(),
+            restored_by_undo: Some(restored_by_undo),
         });
         if self.history.len() > 100 {
             self.history.remove(0);
@@ -414,6 +559,7 @@ impl Workspace {
         self.trim_history(sizes);
     }
     fn commit(&mut self, doc: impl Into<Arc<Document>>, label: String, actor: &str) {
+        self.retain_current_revision();
         let mut sizes = self.take_history_budget();
         sizes.0.push(self.document.encoded_len());
         sizes.1.clear();
@@ -421,7 +567,7 @@ impl Workspace {
         self.redo.clear();
         self.trim_history(sizes);
         self.document = doc.into();
-        self.record(label, actor);
+        self.record(label, actor, false);
     }
     fn reply(&self, compact: bool) -> Value {
         if compact {
@@ -540,12 +686,10 @@ impl Workspace {
                     apply(&self.document, &patch.operations)?
                 };
                 if compact_preview {
-                    return Ok(json!({
-                        "valid":true,"revision":self.revision,"label":patch.label,
-                        "nodes":preview_entities(&self.document.nodes, &next.nodes),
-                        "edges":preview_entities(&self.document.edges, &next.edges),
-                        "diagnostics":next.diagnostics(),
-                    }));
+                    let mut preview =
+                        preview_changes(&self.document, &next, self.revision, &patch.label);
+                    preview["valid"] = json!(true);
+                    return Ok(preview);
                 }
                 if method == "design.propose_patch" {
                     return Ok(
@@ -557,6 +701,13 @@ impl Workspace {
             }
             "design.undo" | "design.redo" => {
                 self.check_revision(revision(&args)?)?;
+                if method == "design.undo" && self.undo.is_empty() {
+                    return Err("Nothing to undo".into());
+                }
+                if method == "design.redo" && self.redo.is_empty() {
+                    return Err("Nothing to redo".into());
+                }
+                self.retain_current_revision();
                 let mut sizes = self.take_history_budget();
                 if method == "design.undo" {
                     let previous = self.undo.pop().ok_or("Nothing to undo")?;
@@ -572,7 +723,7 @@ impl Workspace {
                     self.document = next;
                 }
                 self.trim_history(sizes);
-                self.record(method.into(), actor);
+                self.record(method.into(), actor, method == "design.undo");
                 Ok(self.reply(compact))
             }
             "design.set_signed" => {
@@ -785,9 +936,51 @@ impl Workspace {
                 Ok(json!(report))
             }
             "revision.changes_since" => self.revision_changes_since(&args),
+            "revision.list_snapshots" => Ok(self.revision_snapshot_list()),
             "revision.diff" => {
-                let prev = self.undo.last().ok_or("No previous revision")?;
-                Ok(json!({"before":prev,"after":self.document,"revision":self.revision}))
+                if args.get("expected_revision").is_some() {
+                    self.check_revision(revision(&args)?)?;
+                }
+                let (from, to) = match (args.get("from_revision"), args.get("to_revision")) {
+                    (Some(from), Some(to)) => (
+                        from.as_u64().ok_or("Invalid from_revision")?,
+                        to.as_u64().ok_or("Invalid to_revision")?,
+                    ),
+                    (None, None) => (self.revision.saturating_sub(1), self.revision),
+                    _ => return Err("Specify both from_revision and to_revision".into()),
+                };
+                let archived = self.archived_revisions();
+                let find = |revision| {
+                    if revision == self.revision {
+                        Some(self.document.as_ref())
+                    } else {
+                        archived
+                            .iter()
+                            .find(|entry| entry.revision == revision)
+                            .map(|entry| entry.document.as_ref())
+                    }
+                };
+                let pair = if self.revision == 0 && args.get("from_revision").is_none() {
+                    None
+                } else {
+                    find(from).zip(find(to))
+                };
+                if args["compact"] == true {
+                    let Some((before, after)) = pair else {
+                        return Ok(json!({"available":false,"revision":self.revision}));
+                    };
+                    let label = self
+                        .history
+                        .iter()
+                        .find(|event| event.revision == to)
+                        .map_or("", |event| event.label.as_str());
+                    let mut preview = preview_changes(before, after, to, label);
+                    preview["available"] = json!(true);
+                    preview["from_revision"] = json!(from);
+                    return Ok(preview);
+                }
+                let (before, after) = pair.ok_or("Revision snapshot unavailable")?;
+                Ok(json!({"before":before,"after":after,"revision":to}))
             }
             "experiment.create" => {
                 self.check_revision(revision(&args)?)?;

@@ -1,5 +1,5 @@
 import { EdaJobStatus, useEdaJob } from "./EdaJob";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   CheckCircle2,
   Clock3,
@@ -7,12 +7,14 @@ import {
   Play,
   RefreshCw,
   ArrowUpRight,
+  GitCompareArrows,
 } from "lucide-react";
 import { action, rpc, select } from "../store";
 import { translation } from "../i18n";
 import type { Snapshot } from "../types";
 import { Hint, IconButton } from "./ui";
 import { Simulation } from "./Simulation";
+import { PatchDiff, type PatchPreview } from "./PatchDiff";
 
 type FormalResult = {
   revision: number;
@@ -38,6 +40,110 @@ type RtlResult = {
   rtl_failures?: string[];
   artifact_directory: string;
 };
+function RevisionComparison({
+  revision,
+  t,
+}: {
+  revision: number;
+  t: ReturnType<typeof translation>;
+}) {
+  type Catalog = {
+    revision: number;
+    snapshots: { revision: number; label: string | null }[];
+  };
+  const comparisonId = useId();
+  const [catalog, setCatalog] = useState<Catalog>();
+  const [from, setFrom] = useState<number>();
+  const [to, setTo] = useState(revision);
+  const [preview, setPreview] = useState<PatchPreview>();
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    void rpc<Catalog>("revision.list_snapshots")
+      .then((result) => {
+        if (!mounted || result.revision !== revision) return;
+        setCatalog(result);
+        setFrom(result.snapshots[1]?.revision);
+      })
+      .catch((error) => {
+        if (mounted) setMessage(String(error));
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [revision]);
+  async function compare() {
+    if (from === undefined) return;
+    setLoading(true);
+    setMessage("");
+    setPreview(undefined);
+    try {
+      const result = await rpc<
+        ({ available: true } & PatchPreview) | { available: false }
+      >("revision.diff", {
+        compact: true,
+        expected_revision: revision,
+        from_revision: from,
+        to_revision: to,
+      });
+      if (result.available) setPreview(result);
+      else setMessage(t("revisionSnapshotUnavailable"));
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+  return (
+    <section className="revision-comparison">
+      {catalog && catalog.snapshots.length > 1 && (
+        <div className="revision-comparison-controls">
+          {(
+            [
+              ["revisionFrom", from, setFrom],
+              ["revisionTo", to, setTo],
+            ] as const
+          ).map(([label, selected, set]) => (
+            <div key={label}>
+              <label htmlFor={`${comparisonId}-${label}`}>{t(label)}</label>
+              <select
+                id={`${comparisonId}-${label}`}
+                value={selected}
+                disabled={loading}
+                onChange={(event) => {
+                  set(Number(event.currentTarget.value));
+                  setPreview(undefined);
+                  setMessage("");
+                }}
+              >
+                {catalog.snapshots.map(({ revision, label }) => (
+                  <option key={revision} value={revision}>
+                    r{String(revision).padStart(3, "0")}
+                    {label ? ` · ${label}` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ))}
+          <button
+            type="button"
+            disabled={loading || from === undefined || from === to}
+            onClick={() => void compare()}
+          >
+            <GitCompareArrows size={14} />
+            {t("compareRevisions")}
+          </button>
+        </div>
+      )}
+      {catalog?.snapshots.length === 1 && (
+        <p>{t("revisionSnapshotUnavailable")}</p>
+      )}
+      {message && <p role="status">{message}</p>}
+      {preview && <PatchDiff preview={preview} t={t} />}
+    </section>
+  );
+}
 export function Results({
   snapshot,
   busy,
@@ -170,6 +276,13 @@ export function Results({
       ) : null}
       {tab === "history" ? (
         <div className="history-list">
+          {snapshot.revision > 0 && (
+            <RevisionComparison
+              key={snapshot.revision}
+              revision={snapshot.revision}
+              t={t}
+            />
+          )}
           {snapshot.history.length ? (
             [...snapshot.history].reverse().map((h) => (
               <div key={h.revision}>

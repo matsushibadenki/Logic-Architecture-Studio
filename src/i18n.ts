@@ -53,6 +53,10 @@ const en = {
   stimuliSchema:
     "Design inputs changed. Start a new table or import matching CSV.",
 
+  compareRevisions: "Compare revisions",
+  revisionFrom: "From revision",
+  revisionTo: "To revision",
+  revisionSnapshotUnavailable: "The previous circuit snapshot is unavailable.",
   mcpPatchDiff: "Circuit changes",
   mcpDiffNodes: "Nodes",
   mcpDiffWires: "Wires",
@@ -344,6 +348,10 @@ const ja: Dictionary = {
   stimuliSchema:
     "回路の入力が変わっています。新しい入力表か対応するCSVを用意してください。",
 
+  compareRevisions: "リビジョンを比較",
+  revisionFrom: "比較元",
+  revisionTo: "比較先",
+  revisionSnapshotUnavailable: "直前の回路スナップショットを取得できません。",
   mcpPatchDiff: "回路の差分",
   mcpDiffNodes: "ノード",
   mcpDiffWires: "配線",
@@ -632,6 +640,10 @@ const zh: Dictionary = {
   newStimuli: "新建激励表",
   stimuliSchema: "电路输入已更改，请新建激励表或导入匹配的 CSV。",
 
+  compareRevisions: "比较修订",
+  revisionFrom: "起始修订",
+  revisionTo: "目标修订",
+  revisionSnapshotUnavailable: "上一修订的电路快照不可用。",
   mcpPatchDiff: "电路差异",
   mcpDiffNodes: "节点",
   mcpDiffWires: "连线",

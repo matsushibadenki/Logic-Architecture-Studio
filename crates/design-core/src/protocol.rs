@@ -142,10 +142,11 @@ pub fn tools() -> Vec<Value> {
         ),
         (
             "revision.diff",
-            "Compare the previous document with the current one",
-            empty.clone(),
+            "Compare any two retained circuit revisions",
+            json!({"compact":{"type":"boolean"},"expected_revision":revision,"from_revision":revision,"to_revision":revision}),
             vec![],
         ),
+        ("revision.list_snapshots", "List circuit revisions available for comparison", empty.clone(), vec![]),
         (
             "experiment.create",
             "Fork 1–8 isolated candidates; empty operations creates a baseline",

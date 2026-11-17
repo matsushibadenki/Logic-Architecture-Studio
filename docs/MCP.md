@@ -66,6 +66,12 @@ Verified on one Mac using an isolated OpenSSH server and Inspector over an IPv6 
 
 Verified on macOS with Inspector 2.15.0. A proposal at revision 0 renamed and moved the ADD node. The compact preview and the in-app preview matched. Approval and retry produced revision 1, and all 320 ALU vectors passed. Undo restored the original name and position in the GPU canvas, and Inspector returned the original nodes and wires at revision 2. Inspector reported the revision 1 verification as stale and rejected a new preview based on revision 0.
 
+### Compare retained circuit revisions
+
+Call `revision.list_snapshots` to get the revisions available for comparison. Pass the two chosen numbers to `revision.diff`, for example `{"compact":true,"from_revision":10,"to_revision":42}`. The response carries both revision numbers and the changed top-level nodes, wires, document name and shared module definitions. Changed definitions include their internal node and wire differences. Reversing the pair reverses the direction of the diff. Omitting the pair selects the immediately preceding and current revision. Omitting `compact` returns both full documents.
+
+In **Results → History**, use **From revision** and **To revision**. The workspace saves the comparison snapshots with the same checkpoints and move-log replay used to restore the circuit. It retains the current circuit plus up to 100 earlier snapshots, subject to a 16 MiB budget for earlier document data. For older saved workspaces, snapshots are listed only when their revision can be reconstructed from the existing Undo history. Missing or expired snapshots return `available:false` in compact mode.
+
 ## Desktop MCP settings (Phase 4)
 
 Open **Preferences → MCP**. A workspace contains one circuit document, including its module definitions. Select **Publish** for the named circuit. Reading is included with publication. Enable simulation access or write requests as needed, then select **Start**. The app starts a loopback server on an available port and creates a new Bearer token. Copy the URL and reveal the token only when configuring a local client. The publishing and scope choices are stored per workspace. The server always starts stopped when the application opens.

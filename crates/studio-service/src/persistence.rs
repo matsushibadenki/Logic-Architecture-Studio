@@ -390,4 +390,38 @@ mod tests {
         assert!(reopened.records < CHECKPOINT_RECORDS);
         assert_eq!(recovered.undo.len(), 100);
     }
+    #[test]
+    fn revision_pairs_survive_checkpoint_and_move_replay_after_branching() {
+        let root = Root::new("compare");
+        let (mut store, mut state) = Persistence::open(&root.0).unwrap();
+        let edit = serde_json::json!({"expected_revision":0,"label":"Rename","operations":[{"op":"update_node","id":"add","name":"sum"}]});
+        state
+            .dispatch("design.apply_patch", edit.clone(), "test")
+            .unwrap();
+        store
+            .commit(&state, "design.apply_patch", &edit, "test")
+            .unwrap();
+        let undo = serde_json::json!({"expected_revision":1});
+        state.dispatch("design.undo", undo.clone(), "test").unwrap();
+        store.commit(&state, "design.undo", &undo, "test").unwrap();
+        state = moved(&mut store, &state, 424.);
+        drop(store);
+
+        let (_, mut reopened) = Persistence::open(&root.0).unwrap();
+        let diff = reopened
+            .dispatch(
+                "revision.diff",
+                serde_json::json!({
+                    "compact":true,"from_revision":1,"to_revision":3
+                }),
+                "test",
+            )
+            .unwrap();
+        assert_eq!(diff["from_revision"], 1);
+        assert_eq!(diff["revision"], 3);
+        assert_eq!(diff["nodes"][0]["before"]["name"], "sum");
+        assert_eq!(diff["nodes"][0]["after"]["name"], "add");
+        assert_eq!(diff["nodes"][0]["after"]["x"], 424.);
+        assert_eq!(reopened, state);
+    }
 }

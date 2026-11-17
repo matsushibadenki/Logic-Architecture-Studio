@@ -86,6 +86,7 @@ impl AppAdapter for StudioAdapter {
                     | "testbench.export_csv"
                     | "simulation.vcd"
                     | "simulation.state"
+                    | "revision.list_snapshots"
                     | "revision.diff"
                     | "revision.changes_since"
                     | "experiment.compare"

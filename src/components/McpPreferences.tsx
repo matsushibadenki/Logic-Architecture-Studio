@@ -4,120 +4,17 @@ import { Check, Eye, EyeOff, Play, Square, X } from "lucide-react";
 import { translation } from "../i18n";
 import { native } from "../store";
 import { Hint } from "./ui";
+import { PatchDiff, type PatchPreview } from "./PatchDiff";
 
 type Policy = { publish: boolean; session: boolean; write: boolean };
 type Request = { id: string; principal: string; tool: string };
 type Status = { policy: Policy; endpoint: string | null; pending: Request[] };
-type EntityChange = {
-  id: string;
-  before: Record<string, unknown> | null;
-  after: Record<string, unknown> | null;
-};
-type PatchPreview = {
-  revision: number;
-  label: string;
-  nodes: EntityChange[];
-  edges: EntityChange[];
-  diagnostics: { code: string; node: string | null; message: string }[];
-};
 type ReviewDetails = {
   arguments: unknown;
   preview?: PatchPreview;
   preview_error?: string;
 };
 type Review = ReviewDetails & { request: Request };
-type Translate = ReturnType<typeof translation>;
-
-function PatchDiff({ preview, t }: { preview: PatchPreview; t: Translate }) {
-  const groups = [
-    { name: t("mcpDiffNodes"), entries: preview.nodes },
-    { name: t("mcpDiffWires"), entries: preview.edges },
-  ];
-  const display = (value: unknown) =>
-    value === undefined
-      ? "—"
-      : typeof value === "string"
-        ? value
-        : JSON.stringify(value);
-  return (
-    <div className="mcp-diff">
-      <h3>
-        {t("mcpPatchDiff")} · r{preview.revision}
-      </h3>
-      <p>{preview.label}</p>
-      {groups.every(({ entries }) => entries.length === 0) && (
-        <p>{t("mcpNoChanges")}</p>
-      )}
-      {groups
-        .filter(({ entries }) => entries.length > 0)
-        .map(({ name, entries }) => (
-          <section key={name} aria-label={name}>
-            <h4>
-              {name} ({entries.length})
-            </h4>
-            {entries.map(({ id, before, after }) => (
-              <div className="mcp-diff-entry" key={id}>
-                <strong>
-                  {id} ·{" "}
-                  {t(
-                    !before
-                      ? "mcpDiffAdded"
-                      : !after
-                        ? "mcpDiffRemoved"
-                        : "mcpDiffChanged",
-                  )}
-                </strong>
-                <dl>
-                  {[
-                    ...new Set([
-                      ...Object.keys(before ?? {}),
-                      ...Object.keys(after ?? {}),
-                    ]),
-                  ]
-                    .filter(
-                      (field) =>
-                        field !== "id" &&
-                        JSON.stringify(before?.[field]) !==
-                          JSON.stringify(after?.[field]),
-                    )
-                    .map((field) => (
-                      <div key={field}>
-                        <dt>{field}</dt>
-                        <dd>
-                          <del aria-label={t("mcpDiffBefore")}>
-                            {display(before?.[field])}
-                          </del>
-                          <span aria-hidden="true"> → </span>
-                          <ins aria-label={t("mcpDiffAfter")}>
-                            {display(after?.[field])}
-                          </ins>
-                        </dd>
-                      </div>
-                    ))}
-                </dl>
-              </div>
-            ))}
-          </section>
-        ))}
-      {preview.diagnostics.length > 0 && (
-        <details>
-          <summary>
-            {t("mcpPreviewDiagnostics")} ({preview.diagnostics.length})
-          </summary>
-          <ul>
-            {preview.diagnostics.map(({ code, node, message }, index) => (
-              <li key={index}>
-                {node && `${node} · `}
-                {code} · {message}
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
-    </div>
-  );
-}
-
 export default function McpPreferences({
   documentName,
   t,
