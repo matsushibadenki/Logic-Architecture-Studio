@@ -76,6 +76,52 @@ fn proposal_does_not_mutate() {
     assert_eq!(w.document.node("add").unwrap().name, "add");
 }
 #[test]
+fn compact_preview_reports_implicit_wire_removals_without_mutating() {
+    let mut workspace = Workspace::default();
+    let mut request = patch(&workspace, json!([{"op":"remove_node","id":"result"}]));
+    request["compact"] = json!(true);
+    let preview = workspace
+        .dispatch("design.propose_patch", request, "mcp")
+        .unwrap();
+    assert_eq!(preview["revision"], 0);
+    assert!(preview.get("before").is_none());
+    assert_eq!(preview["nodes"][0]["before"]["id"], "result");
+    assert!(preview["nodes"][0]["after"].is_null());
+    assert_eq!(preview["edges"][0]["before"]["to"], "result");
+    assert!(preview["edges"][0]["after"].is_null());
+    assert_eq!(workspace.revision, 0);
+    assert!(workspace.document.node("result").is_ok());
+}
+
+#[test]
+fn verification_result_reports_the_tested_revision_after_undo() {
+    let mut workspace = Workspace::default();
+    assert_eq!(workspace.verification_result()["status"], "not_run");
+    let request = patch(
+        &workspace,
+        json!([{"op":"update_node","id":"add","name":"sum"}]),
+    );
+    workspace
+        .dispatch("design.apply_patch", request, "mcp")
+        .unwrap();
+    assert!(workspace
+        .dispatch("verify.run_tests", json!({"expected_revision":0}), "mcp")
+        .is_err());
+    workspace
+        .dispatch("verify.run_tests", json!({"expected_revision":1}), "mcp")
+        .unwrap();
+    assert_eq!(workspace.verification_result()["status"], "current");
+    workspace
+        .dispatch("design.undo", json!({"expected_revision":1}), "gui")
+        .unwrap();
+    let result = workspace.verification_result();
+    assert_eq!(result["status"], "stale");
+    assert_eq!(result["revision"], 2);
+    assert_eq!(result["report"]["revision"], 1);
+    assert_eq!(result["report"]["passed"], 320);
+}
+
+#[test]
 fn incomplete_design_cannot_export() {
     let mut d = Document::demo();
     d.edges.pop();

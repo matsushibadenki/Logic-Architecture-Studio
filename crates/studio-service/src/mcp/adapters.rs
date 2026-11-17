@@ -91,6 +91,7 @@ impl AppAdapter for StudioAdapter {
                     | "experiment.compare"
                     | "experiment.get_status"
                     | "tools.status"
+                    | "verify.get_result"
                     | "job.status" => Access::Read,
                     "simulation.evaluate"
                     | "simulation.cycles"

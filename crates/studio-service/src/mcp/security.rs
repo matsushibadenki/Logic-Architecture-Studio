@@ -339,7 +339,7 @@ impl Security {
             .collect()
     }
 
-    pub fn review(&self, id: &str) -> Option<Value> {
+    pub fn review(&self, id: &str) -> Option<(String, Value)> {
         let approvals = self.approvals.lock().unwrap();
         approvals
             .iter()
@@ -348,7 +348,7 @@ impl Security {
                     && approval.expires > Instant::now()
                     && approval.decision.is_none()
             })
-            .map(|approval| approval.args.clone())
+            .map(|approval| (approval.tool.clone(), approval.args.clone()))
     }
 
     pub fn desktop_decide(&self, id: &str, approve: bool) -> Result<(), &'static str> {

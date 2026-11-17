@@ -166,19 +166,24 @@ pub fn mcp_token(
 }
 
 #[tauri::command]
-pub fn mcp_review(
+pub async fn mcp_review(
     webview: tauri::Webview,
-    state: tauri::State<'_, State>,
+    app: tauri::AppHandle,
     id: String,
 ) -> Result<serde_json::Value, String> {
     authorize(&webview)?;
-    let inner = state.inner.lock().unwrap();
-    let server = inner
-        .server
-        .as_ref()
-        .filter(|server| server.is_running())
-        .ok_or("mcp_stopped")?;
-    server.review(&id).ok_or_else(|| "approval_expired".into())
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<State>();
+        let inner = state.inner.lock().unwrap();
+        let server = inner
+            .server
+            .as_ref()
+            .filter(|server| server.is_running())
+            .ok_or("mcp_stopped")?;
+        server.review(&id).ok_or_else(|| "approval_expired".into())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -197,7 +202,7 @@ pub async fn mcp_decide(
             .as_ref()
             .filter(|server| server.is_running())
             .ok_or("mcp_stopped")?;
-        server.decide(&id, approve).map_err(str::to_owned)
+        server.decide(&id, approve)
     })
     .await
     .map_err(|e| e.to_string())?

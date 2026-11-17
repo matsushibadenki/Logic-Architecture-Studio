@@ -2828,3 +2828,42 @@ html.toolbar-document,
   overflow-wrap: anywhere;
   user-select: text;
 }
+
+.mcp-diff {
+  overflow: auto;
+  max-height: 240px;
+  padding: 8px;
+  border: 1px solid var(--color-rule);
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+.mcp-diff h3,
+.mcp-diff h4 {
+  margin: 0 0 4px;
+}
+.mcp-diff section,
+.mcp-diff details {
+  margin-top: 9px;
+}
+.mcp-diff-entry {
+  padding: 6px 0;
+  border-top: 1px solid var(--color-rule);
+}
+.mcp-diff-entry dl,
+.mcp-diff-entry dd {
+  margin: 0;
+}
+.mcp-diff-entry dl > div {
+  display: grid;
+  grid-template-columns: minmax(70px, auto) minmax(0, 1fr);
+  gap: 8px;
+}
+.mcp-diff-entry dd {
+  font-family: monospace;
+}
+.mcp-diff-entry del {
+  color: var(--color-muted);
+}
+.mcp-diff-entry ins {
+  font-weight: 600;
+}

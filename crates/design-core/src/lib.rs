@@ -10,6 +10,31 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc};
 
+fn preview_entities<T>(before: &entities::Entities<T>, after: &entities::Entities<T>) -> Vec<Value>
+where
+    T: entities::Entity + Clone + PartialEq + Serialize,
+{
+    if let Some(changed) = after.changed(before) {
+        return changed
+            .into_iter()
+            .map(|(new, old)| json!({"id":new.id(),"before":old,"after":new}))
+            .collect();
+    }
+    let mut result = Vec::new();
+    for old in before.iter() {
+        let new = after.by_id(old.id());
+        if new != Some(old) {
+            result.push(json!({"id":old.id(),"before":old,"after":new}));
+        }
+    }
+    for new in after.iter() {
+        if before.by_id(new.id()).is_none() {
+            result.push(json!({"id":new.id(),"before":null,"after":new}));
+        }
+    }
+    result
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
@@ -284,6 +309,15 @@ impl Workspace {
     pub fn snapshot(&self) -> Value {
         json!({"document":self.document,"revision":self.revision,"history":self.history,"can_undo":!self.undo.is_empty(),"can_redo":!self.redo.is_empty(),"report":self.report,"experiments":self.experiments,"selected":self.selected,"selection":self.selected_nodes(),"locale":self.locale,"gate_symbols":self.gate_symbols,"hide_gate_frames":self.hide_gate_frames,"theme":self.theme,"node_colors":self.node_colors,"testbench":self.testbench,"panels":self.panels,"diagnostics":self.document.diagnostics()})
     }
+    pub fn verification_result(&self) -> Value {
+        let status = match &self.report {
+            None => "not_run",
+            Some(report) if report.revision == self.revision => "current",
+            Some(_) => "stale",
+        };
+        json!({"revision":self.revision,"status":status,"report":self.report})
+    }
+
     fn check_revision(&self, r: u64) -> Result<(), String> {
         if r != self.revision {
             Err(format!(
@@ -487,6 +521,13 @@ impl Workspace {
                 Ok(self.reply(compact))
             }
             "design.propose_patch" | "design.apply_patch" => {
+                let mut args = args;
+                let compact_preview = method == "design.propose_patch"
+                    && args
+                        .as_object_mut()
+                        .and_then(|object| object.remove("compact"))
+                        .and_then(|value| value.as_bool())
+                        .unwrap_or(false);
                 let patch: Patch = parse(args)?;
                 self.check_revision(patch.expected_revision)?;
                 if patch.label.len() > 160 {
@@ -498,6 +539,14 @@ impl Workspace {
                 } else {
                     apply(&self.document, &patch.operations)?
                 };
+                if compact_preview {
+                    return Ok(json!({
+                        "valid":true,"revision":self.revision,"label":patch.label,
+                        "nodes":preview_entities(&self.document.nodes, &next.nodes),
+                        "edges":preview_entities(&self.document.edges, &next.edges),
+                        "diagnostics":next.diagnostics(),
+                    }));
+                }
                 if method == "design.propose_patch" {
                     return Ok(
                         json!({"valid":true,"patch":patch,"before":self.document,"after":next,"diagnostics":next.diagnostics()}),
@@ -721,7 +770,11 @@ impl Workspace {
                     json!({"revision":self.revision,"outputs":self.document.format_outputs(&output)}),
                 )
             }
+            "verify.get_result" => Ok(self.verification_result()),
             "verify.run_tests" => {
+                if let Some(expected) = args.get("expected_revision") {
+                    self.check_revision(expected.as_u64().ok_or("Invalid expected_revision")?)?;
+                }
                 let vectors = if args["vectors"].is_null() {
                     alu_vectors(&self.document)?
                 } else {

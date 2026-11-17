@@ -283,6 +283,9 @@ impl Service {
         if req.method == "project.inspect" || req.method == "design.get_ir" {
             return Ok(state.snapshot());
         }
+        if req.method == "verify.get_result" {
+            return Ok(state.verification_result());
+        }
         if req.method == "revision.changes_since" {
             return state.revision_changes_since(&req.args);
         }

@@ -23,6 +23,8 @@ pub fn tools() -> Vec<Value> {
     ]});
     let vectors = json!({"type":"array","minItems":1,"maxItems":4096,"items":{"type":"object","required":["inputs","expected"],"additionalProperties":false,"properties":{"inputs":{"type":"object","additionalProperties":{"type":"string"}},"expected":{"type":"object","additionalProperties":{"type":"string"}}}}});
     let patch = json!({"expected_revision":revision,"label":{"type":"string","maxLength":160},"operations":{"type":"array","items":op,"minItems":1,"maxItems":512}});
+    let mut preview = patch.clone();
+    preview["compact"] = json!({"type":"boolean"});
     let empty = json!({});
     let defs = vec![
         ("module.edit","Edit a shared module definition with a fixed interface",json!({"expected_revision":revision,"definition":identifier,"operations":{"type":"array","items":op,"minItems":1,"maxItems":512}}),vec!["expected_revision","definition","operations"]),
@@ -45,7 +47,7 @@ pub fn tools() -> Vec<Value> {
         (
             "design.propose_patch",
             "Validate and preview a patch without changing the design",
-            patch.clone(),
+            preview,
             vec!["expected_revision", "label", "operations"],
         ),
         (
@@ -128,9 +130,10 @@ pub fn tools() -> Vec<Value> {
         (
             "verify.run_tests",
             "Run explicit vectors, or the built-in ALU contract when omitted; not formal proof",
-            json!({"vectors":vectors}),
+            json!({"vectors":vectors,"expected_revision":revision}),
             vec![],
         ),
+        ("verify.get_result", "Read the last test report and whether it matches the current revision", empty.clone(), vec![]),
         (
             "revision.changes_since",
             "List retained revision summaries after a revision, or indicate that the client needs a fresh snapshot",

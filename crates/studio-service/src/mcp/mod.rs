@@ -356,6 +356,7 @@ pub async fn run_cli(
 pub use security::ApprovalSummary;
 
 pub struct DesktopServer {
+    root: std::path::PathBuf,
     security: Arc<Security>,
     pub endpoint: String,
     pub token: String,
@@ -377,7 +378,7 @@ impl DesktopServer {
         let hosts = hosts(address);
         let (security, token) = Security::desktop(&directory, hosts.clone(), session, write)?;
         let security = Arc::new(security);
-        let mut mcp = bridge(root, false, write)?;
+        let mut mcp = bridge(root.clone(), false, write)?;
         mcp.on_change = Some(Arc::new(on_change));
         let router = router(mcp, security.clone(), hosts, false);
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -403,6 +404,7 @@ impl DesktopServer {
                 });
             })?;
         Ok(Self {
+            root,
             security,
             endpoint: format!("http://{address}/mcp"),
             token,
@@ -421,12 +423,39 @@ impl DesktopServer {
         self.security.pending()
     }
 
-    pub fn review(&self, id: &str) -> Option<Value> {
-        self.security.review(id)
+    fn patch_preview(&self, mut arguments: Value) -> Result<Value, String> {
+        arguments["compact"] = json!(true);
+        crate::call(
+            &self.root,
+            &crate::Request {
+                method: "design.propose_patch".into(),
+                args: arguments,
+                actor: "mcp".into(),
+            },
+        )
     }
 
-    pub fn decide(&self, id: &str, approve: bool) -> Result<(), &'static str> {
-        self.security.desktop_decide(id, approve)
+    pub fn review(&self, id: &str) -> Option<Value> {
+        let (tool, arguments) = self.security.review(id)?;
+        if tool == "design.apply_patch" {
+            return Some(match self.patch_preview(arguments.clone()) {
+                Ok(preview) => json!({"arguments":arguments,"preview":preview}),
+                Err(error) => json!({"arguments":arguments,"preview_error":error}),
+            });
+        }
+        Some(json!({"arguments":arguments}))
+    }
+
+    pub fn decide(&self, id: &str, approve: bool) -> Result<(), String> {
+        if approve {
+            let (tool, arguments) = self.security.review(id).ok_or("approval_expired")?;
+            if tool == "design.apply_patch" {
+                self.patch_preview(arguments)?;
+            }
+        }
+        self.security
+            .desktop_decide(id, approve)
+            .map_err(str::to_owned)
     }
 }
 
