@@ -149,7 +149,9 @@
 - 🟢 [Done] Isolated revision-bound candidate documents, common vectors, comparison and guarded GUI adoption.
 - 🟢 [Done] Regression-detection example using baseline, ADD→SUB, XOR→OR candidates.
 - 🟢 [Done] External verification and synthesis job IDs, status polling and cancellation via UI and MCP. Cancelling stops the tool process group before another job can run. Verified cancellation during real Verilator compilation and Yosys synthesis, then successful reruns.
-- 🟠 [Next] OS sandboxing and broader process/resource limits for external tools.
+- 🟢 [Done] Unix external-tool resource limits inherited by child processes: 64 MiB per output file and core dumps disabled. Existing log, VCD and wall-clock limits also apply.
+- 🟢 [Done] Verification and synthesis monitor each run directory across tool stages, with a 256 MiB aggregate file-size budget and an 8,192-entry limit. Checks run during execution and before accepting the tool result.
+- 🟠 [Next] OS sandboxing and operating-system quotas for external tools.
 - 🟠 [Next] Internal model adapter, MCP client and budgeted autonomous exploration loop.
 - 🔴 [Later] Planned GGUF model support: [gemma-4-31B-it-ARA-heretic-GGUF](https://huggingface.co/mradermacher/gemma-4-31B-it-ARA-heretic-GGUF); runtime integration/inference unimplemented. See [model support plan](docs/MODELS.md).
 - 🔴 [Later] Ripple/Carry-select/Brent–Kung/Kogge–Stone generators and measured Pareto optimization.

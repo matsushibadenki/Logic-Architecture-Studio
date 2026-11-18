@@ -10,7 +10,51 @@ use std::{
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
+#[cfg(unix)]
+const TOOL_FILE_LIMIT: u64 = 64 * 1024 * 1024;
 const LOG_LIMIT: u64 = 4 * 1024 * 1024;
+
+const RUN_ARTIFACT_BYTES: u64 = 256 * 1024 * 1024;
+const RUN_ARTIFACT_ENTRIES: usize = 8192;
+
+fn check_run_artifacts(root: &Path) -> Result<(), String> {
+    let mut directories = vec![root.to_path_buf()];
+    let mut bytes = 0u64;
+    let mut entries = 0;
+    while let Some(directory) = directories.pop() {
+        let scan = (|| -> std::io::Result<Option<&str>> {
+            for entry in fs::read_dir(directory)? {
+                let entry = entry?;
+                entries += 1;
+                if entries > RUN_ARTIFACT_ENTRIES {
+                    return Ok(Some("Tool artifact directory exceeded 8192 entries"));
+                }
+                // DirEntry::metadata does not follow symbolic links.
+                let metadata = match entry.metadata() {
+                    Ok(metadata) => metadata,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => return Err(error),
+                };
+                if metadata.is_dir() {
+                    directories.push(entry.path());
+                } else if metadata.is_file() {
+                    bytes = bytes.saturating_add(metadata.len());
+                    if bytes > RUN_ARTIFACT_BYTES {
+                        return Ok(Some("Tool artifacts exceeded 256 MiB"));
+                    }
+                }
+            }
+            Ok(None)
+        })();
+        match scan {
+            Ok(None) => {}
+            Ok(Some(message)) => return Err(message.into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("Could not monitor tool artifacts: {error}")),
+        }
+    }
+    Ok(())
+}
 
 fn testbench(
     doc: &Document,
@@ -94,6 +138,7 @@ pub(crate) fn execute(
     deadline: Instant,
 ) -> Result<bool, String> {
     crate::jobs::checkpoint()?;
+    check_run_artifacts(dir)?;
     let log = File::create(dir.join(log_name)).map_err(|e| e.to_string())?;
     let mut command = Command::new(binary);
     command
@@ -106,18 +151,55 @@ pub(crate) fn execute(
     {
         use std::os::unix::process::CommandExt;
         command.process_group(0);
+        // The limits are inherited by compilers and simulators spawned by the tool.
+        // Only async-signal-safe calls are allowed between fork and exec.
+        unsafe {
+            command.pre_exec(|| {
+                for (resource, maximum) in [
+                    (libc::RLIMIT_FSIZE, TOOL_FILE_LIMIT as libc::rlim_t),
+                    (libc::RLIMIT_CORE, 0),
+                ] {
+                    let mut limit = libc::rlimit {
+                        rlim_cur: 0,
+                        rlim_max: 0,
+                    };
+                    if libc::getrlimit(resource, &mut limit) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    limit.rlim_max = limit.rlim_max.min(maximum);
+                    limit.rlim_cur = limit.rlim_cur.min(limit.rlim_max);
+                    if libc::setrlimit(resource, &limit) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                Ok(())
+            });
+        }
     }
     let mut child = command.spawn().map_err(|e| e.to_string())?;
     crate::jobs::stage(log_name);
+    let mut last_scan = Instant::now();
     loop {
         let status = child.try_wait();
+        let artifact_error =
+            if matches!(status, Ok(Some(_))) || last_scan.elapsed() >= Duration::from_millis(250) {
+                last_scan = Instant::now();
+                check_run_artifacts(dir).err()
+            } else {
+                None
+            };
         let excessive = fs::metadata(dir.join(log_name))
             .map(|m| m.len() > LOG_LIMIT)
             .unwrap_or(false);
         let vcd_excessive = fs::metadata(dir.join("simulation.vcd"))
             .is_ok_and(|m| m.len() > crate::rtl_stimuli::VCD_LIMIT);
         let cancelled = crate::jobs::cancelled();
-        if cancelled || Instant::now() >= deadline || excessive || vcd_excessive || status.is_err()
+        if cancelled
+            || Instant::now() >= deadline
+            || excessive
+            || vcd_excessive
+            || status.is_err()
+            || artifact_error.is_some()
         {
             #[cfg(unix)]
             unsafe {
@@ -125,6 +207,11 @@ pub(crate) fn execute(
             }
             let _ = child.kill();
             let _ = child.wait();
+            if !cancelled && !excessive && !vcd_excessive {
+                if let Some(error) = artifact_error {
+                    return Err(error);
+                }
+            }
             return Err(if cancelled {
                 "Job cancelled"
             } else if vcd_excessive {
@@ -137,6 +224,13 @@ pub(crate) fn execute(
             .into());
         }
         if let Some(status) = status.map_err(|e| e.to_string())? {
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::ExitStatusExt;
+                if status.signal() == Some(libc::SIGXFSZ) {
+                    return Err("Tool reached the OS file-size limit".into());
+                }
+            }
             return Ok(status.success());
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -986,7 +1080,7 @@ mod tests {
                                 _ => next_sample(&mut state),
                             }
                         };
-                        (node.name.clone(), value)
+                        (node.name.clone(), value & design_core::mask(node.width))
                     })
                     .collect();
                 let expected = doc.evaluate(&inputs).unwrap();
@@ -1208,5 +1302,38 @@ mod tests {
         )
         .unwrap_err()
         .contains("output exceeded"));
+    }
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "Requires child processes"]
+    fn tool_file_size_limit_applies_to_unmonitored_artifacts() {
+        let root = Root::new("artifact-limit");
+        let result = execute(
+            Path::new("/bin/sh"),
+            &[
+                "-c",
+                "exec /bin/dd if=/dev/zero of=artifact.bin bs=1048576 seek=63 count=2",
+            ],
+            &root.0,
+            "artifact.log",
+            Instant::now() + Duration::from_secs(5),
+        );
+        assert_ne!(result, Ok(true));
+        let size = fs::metadata(root.0.join("artifact.bin")).unwrap().len();
+        assert!(size > 0 && size <= TOOL_FILE_LIMIT);
+    }
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "Requires child processes"]
+    fn successful_tool_exit_still_checks_total_artifact_size() {
+        let root = Root::new("aggregate-limit");
+        let result = execute(
+            Path::new("/bin/sh"),
+            &["-c", "mkdir nested && for i in 1 2 3 4 5; do /bin/dd if=/dev/zero of=nested/$i bs=1048576 seek=55 count=1 || exit; done"],
+            &root.0,
+            "artifact.log",
+            Instant::now() + Duration::from_secs(5),
+        );
+        assert_eq!(result.unwrap_err(), "Tool artifacts exceeded 256 MiB");
     }
 }
