@@ -100,7 +100,10 @@
 - 🟢 [Done] 2,000-node × 140 real sequential moves per build, including a 16.86 MB checkpoint; editing, floating, re-docking and restart/Undo QA. See docs/HISTORY-PERFORMANCE.md.
 - 🟢 [Done] Copy-on-write entity blocks, indexed position updates and cached block JSON sizes; skip shared blocks in service/native/retained-renderer comparisons.
 - 🟢 [Done] Suppress stale canonical presentation after accepted native gestures; 2,000-node × 120 matching sequential moves and editor/panel/restart QA in docs/SPARSE-MOVE-PERFORMANCE.md.
-- 🟠 [Next] Profile remaining UNGE transactions, visible-scene assembly and scheduling; wider fanout, simultaneous multi-block moves and saturated-input measurements.
+- 🟢 [Done] Release Metal benchmark for 2,000 nodes, 1,998-way fanout and simultaneous moves across four entity blocks. Separately measures retained sync and scene assembly, with full-rebuild equivalence on every frame. See docs/PERFORMANCE.md.
+- 🟢 [Done] Reuse retained edge topology for position-only updates, deduplicate shared routing reservations and port warnings, and batch native drag redraws at the event-loop boundary. See docs/PERFORMANCE.md for the A/B results.
+- 🟠 [Next] Reduce the remaining wide-fanout overview CPU assembly cost. The first A/B run reduced glyph uploads, while CPU assembly took longer.
+- ⭕️ [Pending] Capture matched macOS group-drag traces with measured pointer event rates and preview-frame latency under saturated input.
 - 🟢 [Done] Native left/right/bottom panel strips, same-WebView floating/reparenting, hide/reopen toolbar and OS-close handling.
 - 🟢 [Done] macOS live QA for library, inspector and results: all dock destinations, floating/redocking, panel close/reopen, floating OS-close/reopen.
 - ⭕️ [Pending] Physical multi-monitor/DPI changes and minimize/restore QA.
@@ -151,7 +154,12 @@
 - 🟢 [Done] External verification and synthesis job IDs, status polling and cancellation via UI and MCP. Cancelling stops the tool process group before another job can run. Verified cancellation during real Verilator compilation and Yosys synthesis, then successful reruns.
 - 🟢 [Done] Unix external-tool resource limits inherited by child processes: 64 MiB per output file and core dumps disabled. Existing log, VCD and wall-clock limits also apply.
 - 🟢 [Done] Verification and synthesis monitor each run directory across tool stages, with a 256 MiB aggregate file-size budget and an 8,192-entry limit. Checks run during execution and before accepting the tool result.
-- 🟠 [Next] OS sandboxing and operating-system quotas for external tools.
+- 🟢 [Done] macOS EDA tools and their child processes run under Seatbelt with network access denied and writes limited to the run directory and /dev/null. Compiler temporary files and Clang module cache stay in the run directory.
+- 🟢 [Done] macOS EDA stages use a 256 MiB capacity-limited filesystem for artifacts and temporary files. The runner stops the process group as the volume fills and carries successful artifacts into subsequent stages. Verified descendant shutdown, then Icarus verification and Yosys synthesis.
+- 🟢 [Done] macOS monitors each EDA process group for more than 64 processes or 4 GiB of summed resident memory and stops the group on a sampled overrun.
+- 🟢 [Done] EDA tools inherit a 120 CPU-second per-process limit on Unix. On macOS the runner also stops the process group when sampled CPU time exceeds 90 seconds in a stage, including work already attributed to reaped children.
+- 🟢 [Done] Linux external EDA stages support delegated cgroup v2 through `LAS_EDA_CGROUP`. The kernel enforces two CPU cores of bandwidth and a 4 GiB memory limit with group OOM killing. The runner stops the cgroup at a cumulative 45 CPU-second stage budget.
+- 🟠 [Next] Kernel-enforced aggregate CPU and memory limits on macOS and broader process isolation on other platforms.
 - 🟠 [Next] Internal model adapter, MCP client and budgeted autonomous exploration loop.
 - 🔴 [Later] Planned GGUF model support: [gemma-4-31B-it-ARA-heretic-GGUF](https://huggingface.co/mradermacher/gemma-4-31B-it-ARA-heretic-GGUF); runtime integration/inference unimplemented. See [model support plan](docs/MODELS.md).
 - 🔴 [Later] Ripple/Carry-select/Brent–Kung/Kogge–Stone generators and measured Pareto optimization.

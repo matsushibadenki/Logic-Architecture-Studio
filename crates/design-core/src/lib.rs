@@ -595,6 +595,17 @@ impl Workspace {
         compact: bool,
     ) -> Result<Value, String> {
         match method {
+            "module.export_snippet" => {
+                Ok(json!({"source":self.document.export_snippet(field(&args, "name")?)?}))
+            }
+            "module.import_snippet" => {
+                self.check_revision(revision(&args)?)?;
+                let next = self.document.import_snippet(field(&args, "source")?)?;
+                if next.modules.len() != self.document.modules.len() {
+                    self.commit(next, "Import circuit snippet".into(), actor);
+                }
+                Ok(self.reply(compact))
+            }
             "module.group" => {
                 self.check_revision(revision(&args)?)?;
                 let ids: Vec<String> = parse(args["ids"].clone())?;

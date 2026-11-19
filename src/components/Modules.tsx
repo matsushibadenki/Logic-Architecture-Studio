@@ -1,9 +1,10 @@
-import { useState } from "react";
-import { Group, Ungroup, Plus, Box } from "lucide-react";
+import { useRef, useState } from "react";
+import { Group, Ungroup, Plus, Box, Download, Upload } from "lucide-react";
 import { action } from "../store";
 import { translation } from "../i18n";
 import { symbols, type Snapshot, type ModuleDefinition } from "../types";
 import { IconButton, Hint } from "./ui";
+import { download } from "./Views";
 function selected(snapshot: Snapshot) {
   const ids =
     snapshot.selection ?? (snapshot.selected ? [snapshot.selected] : []);
@@ -59,6 +60,12 @@ export function ModuleActions({
 export function ModuleLibrary({ snapshot }: { snapshot: Snapshot }) {
   const t = translation(snapshot.locale);
   const [name, setName] = useState("");
+  const [query, setQuery] = useState("");
+  const [importError, setImportError] = useState("");
+  const fileInput = useRef<HTMLInputElement>(null);
+  const entries = Object.entries(snapshot.document.modules ?? {}).filter(
+    ([key]) => key.toLowerCase().includes(query.trim().toLowerCase()),
+  );
   return (
     <section className="module-library">
       <div className="section-title">
@@ -75,8 +82,46 @@ export function ModuleLibrary({ snapshot }: { snapshot: Snapshot }) {
         />
         <ModuleActions snapshot={snapshot} name={name} />
       </div>
-      {Object.entries(snapshot.document.modules ?? {}).map(
-        ([key, definition]) => (
+      <div className="module-create">
+        <input
+          type="search"
+          aria-label={t("findSnippets")}
+          placeholder={t("findSnippets")}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        <IconButton
+          icon={Upload}
+          label={t("importSnippet")}
+          onClick={() => fileInput.current?.click()}
+        />
+        <input
+          ref={fileInput}
+          hidden
+          type="file"
+          accept=".json,application/json"
+          onChange={async (event) => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            if (!file) return;
+            setImportError("");
+            try {
+              if (file.size > 256 * 1024) throw new Error(t("snippetTooLarge"));
+              await action("module.import_snippet", {
+                expected_revision: snapshot.revision,
+                source: await file.text(),
+              });
+            } catch (error) {
+              setImportError(
+                error instanceof Error ? error.message : String(error),
+              );
+            }
+          }}
+        />
+      </div>
+      {importError && <small role="alert">{importError}</small>}
+      {entries.map(([key, definition]) => (
+        <div className="snippet-row" key={key}>
           <button
             className="module-item"
             key={key}
@@ -105,8 +150,19 @@ export function ModuleLibrary({ snapshot }: { snapshot: Snapshot }) {
             </small>
             <Plus size={14} />
           </button>
-        ),
-      )}
+          <IconButton
+            icon={Download}
+            label={`${t("exportSnippet")}: ${key}`}
+            onClick={async () => {
+              const result = await action<{ source: string }>(
+                "module.export_snippet",
+                { name: key },
+              );
+              if (result) download(result.source, `${key}.snippet.json`);
+            }}
+          />
+        </div>
+      ))}
     </section>
   );
 }

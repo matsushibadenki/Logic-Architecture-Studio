@@ -6,7 +6,7 @@ import statistics
 from pathlib import Path
 
 
-def prepare(root, count):
+def prepare(root, count, wide_fanout=False):
     dest = root / ".logic" / "workspace.json"
     if dest.exists():
         raise SystemExit(f"Refusing to overwrite {dest}")
@@ -17,6 +17,12 @@ def prepare(root, count):
     state = dict(schema=1, revision=0, document=dict(name=f"Large_{count}", nodes=nodes, edges=edges),
                  history=[], undo=[], redo=[], report=None, experiments=[], selected="n2", locale="en",
                  panels=dict(library="left", inspector="right", results="bottom"))
+    if wide_fanout:
+        for edge in edges:
+            if edge["port"] == "b":
+                edge["from"] = "n0"
+        state["selected"] = "n0"
+        state["selection"] = [f"n{i}" for i in range(0, count, 512)]
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(state))
     print(root)
@@ -62,12 +68,13 @@ if __name__ == "__main__":
     seed = commands.add_parser("prepare")
     seed.add_argument("root", type=Path)
     seed.add_argument("--nodes", type=int, choices=[100, 500, 2000], required=True)
+    seed.add_argument("--wide-fanout", action="store_true")
     report = commands.add_parser("summarize")
     report.add_argument("traces", nargs="+", type=Path)
     report.add_argument("--out", type=Path, required=True)
     report.add_argument("--moves", type=int, default=12)
     args = parser.parse_args()
     if args.command == "prepare":
-        prepare(args.root, args.nodes)
+        prepare(args.root, args.nodes, args.wide_fanout)
     else:
         summarize(args.traces, args.out, args.moves)

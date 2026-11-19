@@ -130,6 +130,96 @@ fn testbench(
     }
     Ok((text, reference))
 }
+#[cfg(target_os = "macos")]
+fn tool_command(binary: &Path, dir: &Path) -> Result<Command, String> {
+    const PROFILE: &str = r#"
+        (version 1)
+        (allow default)
+        (deny network*)
+        (deny file-write*)
+        (allow file-write* (subpath (param "RUN_DIR")) (literal "/dev/null"))
+    "#;
+    let dir = dir.canonicalize().map_err(|error| error.to_string())?;
+    let binary = binary.canonicalize().map_err(|error| error.to_string())?;
+    let mut parameter = std::ffi::OsString::from("RUN_DIR=");
+    parameter.push(&dir);
+    let mut command = Command::new("/usr/bin/sandbox-exec");
+    command
+        .arg("-D")
+        .arg(parameter)
+        .args(["-p", PROFILE])
+        .arg(binary)
+        .env("TMPDIR", &dir)
+        .env("TMP", &dir)
+        .env("TEMP", &dir)
+        .env("CLANG_MODULE_CACHE_PATH", dir.join("clang-module-cache"));
+    Ok(command)
+}
+
+#[cfg(target_os = "macos")]
+fn check_process_group(
+    group: u32,
+    max_resident_bytes: u64,
+    max_cpu: Duration,
+) -> Result<(), String> {
+    // Darwin's proc_listpids filter for an exact process group.
+    const PROC_PGRP_ONLY: u32 = 2;
+    const MAX_PROCESSES: usize = 64;
+    let mut pids = [0i32; MAX_PROCESSES + 1];
+    let bytes = unsafe {
+        libc::proc_listpids(
+            PROC_PGRP_ONLY,
+            group,
+            pids.as_mut_ptr().cast(),
+            std::mem::size_of_val(&pids) as i32,
+        )
+    };
+    if bytes < 0 {
+        return Err(format!(
+            "Could not monitor tool processes: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let count = bytes as usize / std::mem::size_of::<i32>();
+    if count > MAX_PROCESSES {
+        return Err("Tool process group exceeded 64 processes".into());
+    }
+    let mut resident = 0u64;
+    let mut cpu_nanoseconds = 0u64;
+    for &pid in &pids[..count] {
+        let mut info = std::mem::MaybeUninit::<libc::rusage_info_v1>::uninit();
+        let result =
+            unsafe { libc::proc_pid_rusage(pid, libc::RUSAGE_INFO_V1, info.as_mut_ptr().cast()) };
+        // A process may exit between enumeration and the resource query.
+        if result == 0 {
+            let info = unsafe { info.assume_init() };
+            resident = resident.saturating_add(info.ri_resident_size);
+            // Include time the kernel has already attributed to reaped children.
+            for time in [
+                info.ri_user_time,
+                info.ri_system_time,
+                info.ri_child_user_time,
+                info.ri_child_system_time,
+            ] {
+                cpu_nanoseconds = cpu_nanoseconds.saturating_add(time);
+            }
+        }
+    }
+    if Duration::from_nanos(cpu_nanoseconds) > max_cpu {
+        return Err(format!(
+            "Tool process group exceeded {} ms of CPU time",
+            max_cpu.as_millis()
+        ));
+    }
+    if resident > max_resident_bytes {
+        return Err(format!(
+            "Tool process group exceeded {} bytes of resident memory",
+            max_resident_bytes
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn execute(
     binary: &Path,
     args: &[&str],
@@ -139,7 +229,55 @@ pub(crate) fn execute(
 ) -> Result<bool, String> {
     crate::jobs::checkpoint()?;
     check_run_artifacts(dir)?;
+    #[cfg(target_os = "macos")]
+    {
+        let volume = crate::tool_volume::ToolVolume::open(dir)?;
+        let binary = binary.canonicalize().map_err(|error| error.to_string())?;
+        let original = dir.canonicalize().map_err(|error| error.to_string())?;
+        let staged = binary
+            .strip_prefix(&original)
+            .ok()
+            .map(|path| volume.work.join(path));
+        let result = execute_stage(
+            staged.as_deref().unwrap_or(&binary),
+            args,
+            &volume.work,
+            log_name,
+            deadline,
+        );
+        if result.is_ok() {
+            volume.publish(dir)?;
+        } else {
+            // Preserve the bounded diagnostic log when the stage is aborted.
+            let source = volume.work.join(log_name);
+            if let Ok(metadata) = fs::symlink_metadata(&source) {
+                if metadata.is_file() && metadata.len() <= LOG_LIMIT {
+                    let destination = dir.join(log_name);
+                    if !destination.exists() && fs::symlink_metadata(&destination).is_err() {
+                        let _ = fs::copy(source, destination);
+                    }
+                }
+            }
+        }
+        result
+    }
+    #[cfg(not(target_os = "macos"))]
+    execute_stage(binary, args, dir, log_name, deadline)
+}
+
+fn execute_stage(
+    binary: &Path,
+    args: &[&str],
+    dir: &Path,
+    log_name: &str,
+    deadline: Instant,
+) -> Result<bool, String> {
+    crate::jobs::checkpoint()?;
+    check_run_artifacts(dir)?;
     let log = File::create(dir.join(log_name)).map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    let mut command = tool_command(binary, dir)?;
+    #[cfg(not(target_os = "macos"))]
     let mut command = Command::new(binary);
     command
         .current_dir(dir)
@@ -158,6 +296,7 @@ pub(crate) fn execute(
                 for (resource, maximum) in [
                     (libc::RLIMIT_FSIZE, TOOL_FILE_LIMIT as libc::rlim_t),
                     (libc::RLIMIT_CORE, 0),
+                    (libc::RLIMIT_CPU, 120),
                 ] {
                     let mut limit = libc::rlimit {
                         rlim_cur: 0,
@@ -176,11 +315,40 @@ pub(crate) fn execute(
             });
         }
     }
+    #[cfg(target_os = "linux")]
+    let cgroup = crate::tool_cgroup::ToolCgroup::configured()?;
+    #[cfg(target_os = "linux")]
+    if let Some(group) = &cgroup {
+        group
+            .attach(&mut command)
+            .map_err(|error| format!("Join EDA cgroup: {error}"))?;
+    }
     let mut child = command.spawn().map_err(|e| e.to_string())?;
     crate::jobs::stage(log_name);
     let mut last_scan = Instant::now();
     loop {
         let status = child.try_wait();
+        #[cfg(target_os = "macos")]
+        let quota_error = match crate::tool_volume::exhausted(dir) {
+            Ok(true) => Some("Tool exhausted the macOS disk quota".to_owned()),
+            Ok(false) => None,
+            Err(error) => Some(format!("Could not check tool disk quota: {error}")),
+        };
+        #[cfg(target_os = "macos")]
+        let quota_error = quota_error.or_else(|| {
+            if matches!(status, Ok(None)) {
+                check_process_group(child.id(), 4 * 1024 * 1024 * 1024, Duration::from_secs(90))
+                    .err()
+            } else {
+                None
+            }
+        });
+        #[cfg(target_os = "linux")]
+        let quota_error = cgroup
+            .as_ref()
+            .and_then(|group| group.check(45_000_000).err());
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        let quota_error = None;
         let artifact_error =
             if matches!(status, Ok(Some(_))) || last_scan.elapsed() >= Duration::from_millis(250) {
                 last_scan = Instant::now();
@@ -200,15 +368,22 @@ pub(crate) fn execute(
             || vcd_excessive
             || status.is_err()
             || artifact_error.is_some()
+            || quota_error.is_some()
         {
+            #[cfg(target_os = "linux")]
+            let cleanup = cgroup.as_ref().map(|group| group.kill());
             #[cfg(unix)]
             unsafe {
                 libc::kill(-(child.id() as i32), libc::SIGKILL);
             }
             let _ = child.kill();
             let _ = child.wait();
+            #[cfg(target_os = "linux")]
+            if let Some(Err(error)) = cleanup {
+                return Err(format!("Stop EDA cgroup: {error}"));
+            }
             if !cancelled && !excessive && !vcd_excessive {
-                if let Some(error) = artifact_error {
+                if let Some(error) = quota_error.or(artifact_error) {
                     return Err(error);
                 }
             }
@@ -1308,21 +1483,27 @@ mod tests {
     #[ignore = "Requires child processes"]
     fn tool_file_size_limit_applies_to_unmonitored_artifacts() {
         let root = Root::new("artifact-limit");
-        let result = execute(
+        #[cfg(target_os = "macos")]
+        let volume = crate::tool_volume::ToolVolume::open(&root.0).unwrap();
+        #[cfg(target_os = "macos")]
+        let dir = &volume.work;
+        #[cfg(not(target_os = "macos"))]
+        let dir = &root.0;
+        let result = execute_stage(
             Path::new("/bin/sh"),
             &[
                 "-c",
                 "exec /bin/dd if=/dev/zero of=artifact.bin bs=1048576 seek=63 count=2",
             ],
-            &root.0,
+            dir,
             "artifact.log",
             Instant::now() + Duration::from_secs(5),
         );
         assert_ne!(result, Ok(true));
-        let size = fs::metadata(root.0.join("artifact.bin")).unwrap().len();
+        let size = fs::metadata(dir.join("artifact.bin")).unwrap().len();
         assert!(size > 0 && size <= TOOL_FILE_LIMIT);
     }
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     #[ignore = "Requires child processes"]
     fn successful_tool_exit_still_checks_total_artifact_size() {
@@ -1335,5 +1516,170 @@ mod tests {
             Instant::now() + Duration::from_secs(5),
         );
         assert_eq!(result.unwrap_err(), "Tool artifacts exceeded 256 MiB");
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "Requires macOS Seatbelt and child processes"]
+    fn tool_sandbox_limits_child_writes_and_network() {
+        let root = Root::new("sandbox");
+        let run = root.0.join("run");
+        fs::create_dir(&run).unwrap();
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port().to_string();
+        assert!(execute(
+            Path::new("/bin/sh"),
+            &[
+                "-c",
+                r#"
+                /bin/sh -c 'echo allowed > "$TMPDIR/allowed"' || exit 1
+                /bin/sh -c 'echo denied > ../outside' && exit 2
+                /usr/bin/nc -n -v -z -w 1 127.0.0.1 "$1" 2>network.log && exit 3
+                exit 0
+            "#,
+                "sandbox-probe",
+                &port,
+            ],
+            &run,
+            "sandbox.log",
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap());
+        assert!(run.join("allowed").is_file());
+        assert!(!root.0.join("outside").exists());
+        assert!(log(&run, "sandbox.log").contains("Operation not permitted"));
+        let network_log = log(&run, "network.log");
+        assert!(
+            network_log.contains("Operation not permitted"),
+            "{network_log:?}"
+        );
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "Requires macOS disk images, Icarus Verilog and Yosys"]
+    fn os_quota_stops_children_and_verification_and_synthesis_can_rerun() {
+        let root = Root::new("quota-rerun");
+        let run = root.0.join("run");
+        fs::create_dir(&run).unwrap();
+        let script = r#"
+            /bin/sleep 60 &
+            echo "$!"
+            for i in 1 2 3 4 5; do
+                /bin/dd if=/dev/zero of="part-$i" bs=1048576 count=60 || break
+            done
+            wait
+        "#;
+        let error = execute(
+            Path::new("/bin/sh"),
+            &["-c", script],
+            &run,
+            "quota.log",
+            Instant::now() + Duration::from_secs(30),
+        )
+        .unwrap_err();
+        assert_eq!(error, "Tool exhausted the macOS disk quota");
+        let pid = log(&run, "quota.log")
+            .lines()
+            .next()
+            .unwrap()
+            .parse::<u32>()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let output = Command::new("/bin/ps")
+                .args(["-o", "stat=", "-p", &pid.to_string()])
+                .output()
+                .unwrap();
+            let status = String::from_utf8_lossy(&output.stdout);
+            if status.trim().is_empty() || status.trim_start().starts_with('Z') {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Child {pid} still active: {status}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        let service = crate::Service::open(&root.0).unwrap();
+        for (method, args) in [
+            (
+                "verify.rtl",
+                json!({"expected_revision":0,"engine":"icarus"}),
+            ),
+            ("synthesis.run", json!({"expected_revision":0})),
+        ] {
+            let result = service
+                .execute(crate::Request {
+                    method: method.into(),
+                    args,
+                    actor: "test".into(),
+                })
+                .unwrap();
+            assert_eq!(result["success"], true, "{result}");
+        }
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "Requires macOS child processes and disk images"]
+    fn process_group_limit_stops_many_children() {
+        let root = Root::new("process-limit");
+        let error = execute(
+            Path::new("/bin/sh"),
+            &[
+                "-c",
+                "i=0; while [ $i -lt 65 ]; do /bin/sleep 60 & i=$((i+1)); done; wait",
+            ],
+            &root.0,
+            "process.log",
+            Instant::now() + Duration::from_secs(15),
+        )
+        .unwrap_err();
+        assert_eq!(error, "Tool process group exceeded 64 processes");
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "Requires macOS child processes"]
+    fn process_group_monitor_counts_actual_resident_memory() {
+        use std::os::unix::process::CommandExt;
+        let mut child = Command::new("/bin/sleep")
+            .arg("10")
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let result = check_process_group(child.id(), 1, Duration::MAX);
+        let _ = child.kill();
+        child.wait().unwrap();
+        assert!(result.unwrap_err().contains("resident memory"));
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "Requires macOS child processes"]
+    fn process_group_monitor_counts_cpu_from_reaped_children() {
+        use std::os::unix::process::CommandExt;
+        let mut child = Command::new("/bin/sh")
+            .args([
+                "-c",
+                r#"
+                /bin/sh -c 'i=0; while [ "$i" -lt 500000 ]; do i=$((i+1)); done'
+                echo ready
+                /bin/sleep 10
+                :
+            "#,
+            ])
+            .stdout(Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        use std::io::BufRead;
+        let mut marker = String::new();
+        let read = std::io::BufReader::new(child.stdout.take().unwrap()).read_line(&mut marker);
+        let result = check_process_group(child.id(), u64::MAX, Duration::from_millis(5));
+        unsafe {
+            libc::kill(-(child.id() as i32), libc::SIGKILL);
+        }
+        child.wait().unwrap();
+        assert!(read.is_ok());
+        assert_eq!(marker.trim(), "ready");
+        assert!(result.unwrap_err().contains("CPU time"));
     }
 }

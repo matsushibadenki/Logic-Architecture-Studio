@@ -308,11 +308,15 @@ pub fn redraw(app: &tauri::AppHandle) {
 pub struct Bridge(pub tauri::AppHandle);
 pub struct Input {
     app: tauri::AppHandle,
+    drag_frame_pending: bool,
 }
 impl PluginBuilder<EventLoopMessage> for Bridge {
     type Plugin = Input;
     fn build(self, _: Context<EventLoopMessage>) -> Input {
-        Input { app: self.0 }
+        Input {
+            app: self.0,
+            drag_frame_pending: false,
+        }
     }
 }
 impl Plugin<EventLoopMessage> for Input {
@@ -325,6 +329,12 @@ impl Plugin<EventLoopMessage> for Input {
         context: EventLoopIterationContext<'_, EventLoopMessage>,
         _: &WebContextStore,
     ) -> bool {
+        if matches!(event, Event::MainEventsCleared) {
+            if std::mem::take(&mut self.drag_frame_pending) {
+                redraw(&self.app);
+            }
+            return false;
+        }
         if let Event::RedrawRequested(id) = event {
             let ours = context.window_id_map.get(id).is_some_and(|id| {
                 context
@@ -335,6 +345,7 @@ impl Plugin<EventLoopMessage> for Input {
                     .is_some_and(|w| w.label() == "workspace")
             });
             if ours {
+                self.drag_frame_pending = false;
                 self.app.state::<Shared>().lock().unwrap().dirty = true;
                 redraw(&self.app);
             }
@@ -364,6 +375,7 @@ impl Plugin<EventLoopMessage> for Input {
         let root = self.app.state::<super::CoreRoot>();
         let shared = self.app.state::<Shared>();
         let mut n = shared.lock().unwrap();
+        let drag_motion = n.down && matches!(event, WindowEvent::CursorMoved { .. });
         n.dirty |= !matches!(event, WindowEvent::CursorMoved { .. }) || n.down;
         let mut input = None;
         let mut primary_click = None;
@@ -603,7 +615,14 @@ impl Plugin<EventLoopMessage> for Input {
             }
         }
         drop(n);
-        redraw(&self.app);
+        if drag_motion {
+            // Process every motion event, then submit one frame for the last
+            // preview position when this batch of window events has drained.
+            self.drag_frame_pending = true;
+        } else {
+            self.drag_frame_pending = false;
+            redraw(&self.app);
+        }
         false
     }
 }

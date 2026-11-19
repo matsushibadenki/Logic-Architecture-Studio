@@ -27,6 +27,8 @@ pub fn tools() -> Vec<Value> {
     preview["compact"] = json!({"type":"boolean"});
     let empty = json!({});
     let defs = vec![
+        ("module.export_snippet", "Export a reusable circuit block and its dependencies", json!({"name":identifier}), vec!["name"]),
+        ("module.import_snippet", "Import a circuit block into the workspace library", json!({"expected_revision":revision,"source":{"type":"string","maxLength":262144}}), vec!["expected_revision","source"]),
         ("module.edit","Edit a shared module definition with a fixed interface",json!({"expected_revision":revision,"definition":identifier,"operations":{"type":"array","items":op,"minItems":1,"maxItems":512}}),vec!["expected_revision","definition","operations"]),
         ("module.group","Create a reusable module from selected processing nodes, preserving top-level IO",json!({"expected_revision":revision,"name":identifier,"ids":{"type":"array","minItems":1,"maxItems":512,"items":identifier}}),vec!["expected_revision","name","ids"]),
         ("module.instantiate","Place an independent instance of a reusable module",json!({"expected_revision":revision,"name":identifier,"x":{"type":"number","minimum":-100000,"maximum":100000},"y":{"type":"number","minimum":-100000,"maximum":100000}}),vec!["expected_revision","name","x","y"]),

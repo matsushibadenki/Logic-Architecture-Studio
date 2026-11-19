@@ -189,3 +189,10 @@ Automated validation: both installed engines run the signed adder and signed fee
 
 
 Native macOS QA (2026-11-15): opened the saved seven-row signed pipeline table, selected Icarus and Verilator in turn, and obtained 42/42 node comparisons plus 14/14 expectations from each. Sample 3 shows acc=127, delay/result=−128; selecting the cycle updates the native canvas. Changed the negative result expectation from −128 to −127, saved and reran with Verilator: Rust remained 42/42 while expectations became 13/14, and the failure button selected sample 3. Restoring the expectation and rerunning returns 14/14. Both native VCD exports were compared byte-for-byte with their run artifacts; clock/reset signals and event timestamps are present (Icarus: 1,081 bytes; Verilator: 1,026 bytes for this example).
+
+
+## Linux tool budgets
+
+Set `LAS_EDA_CGROUP` in the process that starts Design Core to an absolute path to a cgroup v2 subtree delegated to that account. Enable the `cpu` and `memory` controllers for children and grant the service permission to create child cgroups, migrate its own spawned processes into them, and write `cgroup.kill`. The service itself should run in a separate leaf within the delegation. The integration test `kernel_group_limits_and_eda_rerun` requires this setup, Python 3, Icarus Verilog and Yosys.
+
+Each tool stage starts inside a fresh cgroup before executing the tool binary. The kernel caps CPU bandwidth at two cores and memory at 4 GiB, disables swap for the stage, and enables group OOM killing. Reaching the periodic CPU bandwidth cap throttles the group. The runner reads the kernel's cumulative CPU counter and kills the group at 45 CPU-seconds. It also kills the cgroup on cancellation or monitoring failure. A configured subtree that fails setup prevents tool execution. Leaving the variable unset uses the standard Unix tool runner. [Linux cgroup v2](https://docs.kernel.org/admin-guide/cgroup-v2.html)

@@ -8,6 +8,10 @@ mod routes;
 mod rtl_stimuli;
 mod rtl_verification;
 mod simulation;
+#[cfg(target_os = "linux")]
+mod tool_cgroup;
+#[cfg(target_os = "macos")]
+mod tool_volume;
 use design_core::Workspace;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -113,6 +117,7 @@ impl Service {
                 .ok_or("Missing view command")?
                 .to_string();
             if ![
+                "module.import_snippet",
                 "module.group",
                 "module.edit",
                 "module.instantiate",
@@ -301,6 +306,7 @@ impl Service {
         };
         if ![
             "project.inspect",
+            "module.export_snippet",
             "project.export",
             "testbench.export_csv",
             "design.get_ir",

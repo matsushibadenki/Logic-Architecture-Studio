@@ -15,6 +15,7 @@ fn summary(mut v: Vec<f64>) -> serde_json::Value {
     json!({"p50":v[v.len()/2],"p95":v[(v.len()*95/100).min(v.len()-1)]})
 }
 fn main() {
+    let stress = std::env::args().any(|arg| arg == "--stress");
     pollster::block_on(async {
         let adapter = wgpu::Instance::default()
             .request_adapter(&Default::default())
@@ -46,10 +47,27 @@ fn main() {
         });
         let target = texture.create_view(&Default::default());
         let mut results = vec![];
-        for count in [100, 500, 2000] {
+        let counts: &[usize] = if stress { &[2000] } else { &[100, 500, 2000] };
+        for &count in counts {
             for mode in ["overview", "detail"] {
                 let mut doc = support::circuit(count);
+                if stress {
+                    // Keep the same edge count while feeding one input to every adder.
+                    for edge in doc.edges.iter_mut().filter(|edge| edge.port == "b") {
+                        edge.from = "n0".into();
+                    }
+                }
                 doc.validate(false).unwrap();
+                let moved = if stress {
+                    vec![
+                        "n0".to_owned(),
+                        "n512".to_owned(),
+                        "n1024".to_owned(),
+                        "n1536".to_owned(),
+                    ]
+                } else {
+                    vec![doc.nodes[count / 2].id.clone()]
+                };
                 let mid = count / 2;
                 let view = Viewport {
                     origin: if mode == "detail" {
@@ -79,9 +97,13 @@ fn main() {
                     .unwrap();
                 let (mut full, mut delta, mut prepare, mut completed, mut pass) =
                     (vec![], vec![], vec![], vec![], vec![]);
+                let (mut sync, mut assembly) = (vec![], vec![]);
                 let mut last = serde_json::Value::Null;
                 for sample in 0..35 {
-                    doc.nodes[mid].x += if sample % 2 == 0 { 18. } else { -18. };
+                    let offset = if sample % 2 == 0 { 18. } else { -18. };
+                    for id in &moved {
+                        doc.nodes.update(id, |node| node.x += offset).unwrap();
+                    }
                     let t = Instant::now();
                     let (fresh, labels, _) = project(&doc).unwrap();
                     let scene = SceneIndex::new(&fresh)
@@ -96,6 +118,8 @@ fn main() {
                     let full_ms = ms(t);
                     let t = Instant::now();
                     retained.sync(&doc).unwrap();
+                    let sync_ms = ms(t);
+                    let assembly_start = Instant::now();
                     let incremental = retained
                         .index
                         .scene_with_labels(
@@ -106,6 +130,7 @@ fn main() {
                             Locale::En,
                         )
                         .unwrap();
+                    let assembly_ms = ms(assembly_start);
                     let delta_ms = ms(t);
                     assert_eq!(
                         bytemuck::cast_slice::<_, u8>(&scene.quads),
@@ -118,6 +143,8 @@ fn main() {
                     if sample >= 5 {
                         full.push(full_ms);
                         delta.push(delta_ms);
+                        sync.push(sync_ms);
+                        assembly.push(assembly_ms);
                         prepare.push(timing.prepare_ms);
                         completed.push(timing.completed_frame_ms);
                         if let Some(p) = timing.gpu_pass_ms {
@@ -126,7 +153,7 @@ fn main() {
                     }
                     last = json!({"visible_nodes":incremental.visible_nodes,"visible_edges":incremental.visible_edges,"geometry":incremental.geometry_stats,"quad_upload":gpu.upload_stats(),"full_quad_bytes":incremental.quads.len()*std::mem::size_of::<unge_render::Quad>(),"glyph_upload_bytes":gpu.text_stats().uploaded_bytes});
                 }
-                results.push(json!({"nodes":count,"edges":doc.edges.len(),"view":mode,"samples":30,"full_projection_and_scene_ms":summary(full),"delta_projection_and_scene_ms":summary(delta),"gpu_prepare_ms":summary(prepare),"completed_offscreen_frame_ms":summary(completed),"gpu_pass_ms":if pass.is_empty() {serde_json::Value::Null} else {summary(pass)},"last_frame":last}));
+                results.push(json!({"nodes":count,"edges":doc.edges.len(),"view":mode,"samples":30,"workload":if stress {"wide_fanout_multiblock"} else {"single_move"},"moved_nodes":moved.len(),"delta_sync_ms":summary(sync),"scene_assembly_ms":summary(assembly),"full_projection_and_scene_ms":summary(full),"delta_projection_and_scene_ms":summary(delta),"gpu_prepare_ms":summary(prepare),"completed_offscreen_frame_ms":summary(completed),"gpu_pass_ms":if pass.is_empty() {serde_json::Value::Null} else {summary(pass)},"last_frame":last}));
             }
         }
         assert!(device.pop_error_scope().await.is_none());

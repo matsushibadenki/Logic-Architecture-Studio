@@ -30,6 +30,7 @@ export async function rpc<T = unknown>(
 ): Promise<T> {
   if (
     [
+      "module.import_snippet",
       "module.group",
       "module.edit",
       "module.instantiate",

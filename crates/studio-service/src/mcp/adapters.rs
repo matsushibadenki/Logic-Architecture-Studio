@@ -79,6 +79,7 @@ impl AppAdapter for StudioAdapter {
                 let name = tool["name"].as_str().expect("static tool name");
                 let access = match name {
                     "project.inspect"
+                    | "module.export_snippet"
                     | "project.export"
                     | "design.get_ir"
                     | "design.propose_patch"

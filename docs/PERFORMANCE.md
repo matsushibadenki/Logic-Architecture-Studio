@@ -58,3 +58,30 @@ GPU commands require access to a real desktop GPU and system fonts. The benchmar
 ## Live service / WebView follow-up
 
 Actual native pointer-release, canonical commit, WebView sync/React and native present-request measurements are recorded separately in [WEBVIEW-PERFORMANCE.md](WEBVIEW-PERFORMANCE.md).
+
+### Wide fanout and simultaneous moves
+
+Run `cargo run --release -p studio-renderer --example large_circuit -- --stress`. The fixture contains 2,000 nodes and 3,996 wires. One input drives 1,998 destinations. Each sample moves that input and three other nodes across separate entity blocks. The benchmark verifies matching quads and labels against a fresh rebuild on every frame.
+
+Apple M4 / Metal, release build, 1,600 × 1,000 px, 30 measured samples per view after five warmups. Times are in milliseconds.
+
+| View | Visible nodes / wires | Delta sync p50 / p95 | Scene assembly p50 / p95 | Offscreen render completion p50 / p95 |
+| --- | ---: | ---: | ---: | ---: |
+| Overview | 2,000 / 3,996 | 26.29 / 81.55 | 19.31 / 100.68 | 27.30 / 60.18 |
+| Detail | 63 / 1,130 | 20.06 / 46.35 | 1.47 / 9.07 | 7.27 / 16.46 |
+
+The render-completion column starts after scene assembly. Native input delivery, scheduling and presentation are outside this offscreen measurement.
+
+### Wide-fanout A/B on macOS
+
+Release Metal builds on the same Mac used 30 samples per view, with four nodes moving together in a 2,000-node circuit. The source with 1,998 destinations was one of the moved nodes. Each build verified quads and labels against its own fresh scene reconstruction on every measured frame. Values are p50 / p95 in milliseconds.
+
+| Stage | Overview before | Overview after | Detail before | Detail after |
+| --- | ---: | ---: | ---: | ---: |
+| Retained delta sync | 16.88 / 22.70 | 12.11 / 23.04 | 17.59 / 22.53 | 10.51 / 20.49 |
+| CPU scene assembly | 10.20 / 21.36 | 14.93 / 29.02 | 1.40 / 2.12 | 1.64 / 3.04 |
+| Completed offscreen frame | 16.46 / 28.97 | 20.56 / 30.73 | 5.23 / 11.19 | 7.23 / 9.83 |
+
+Deduplicating blocked-port warnings reduced the final overview frame's glyph upload from 479,520 to 185,568 bytes. The run recorded slower overview assembly and frame completion, leaving both as optimization targets.
+
+Use `scripts/ui_benchmark.py prepare <workspace> --nodes 2000 --wide-fanout` to seed the native QA circuit. Consecutive pointer drags committed native group moves in both release builds. The captured gestures moved different sets of nodes, and restarting the improved QA instance reset its latency trace. A matched native latency comparison remains pending. The current trace records commit and present-request timing from the final gesture event. Measuring in-flight preview latency under saturated input also requires motion-event counts and preview-frame timing.

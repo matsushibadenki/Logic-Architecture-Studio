@@ -1,7 +1,7 @@
 //! Deterministic orthogonal routing shared by the native renderer and web view.
 //! Coordinates and paths are derived presentation data; never mutate the graph.
 use serde::Serialize;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
+use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 pub type Point = [f32; 2];
 pub type Bounds = [f32; 4];
 const CLEARANCE: f32 = 12.;
@@ -71,15 +71,19 @@ impl Index {
     }
     fn query(&self, r: Bounds) -> Vec<usize> {
         if let Some((x, y, xx, yy)) = cells(r) {
-            let mut ids = BTreeSet::new();
+            let mut ids = Vec::new();
             for i in x..=xx {
                 for j in y..=yy {
-                    if let Some(v) = self.cells.get(&(i, j)) {
-                        ids.extend(v.iter().copied());
+                    if let Some(indices) = self.cells.get(&(i, j)) {
+                        ids.extend_from_slice(indices);
                     }
                 }
             }
-            ids.extend(self.large.iter().copied());
+            if x != xx || y != yy || !self.large.is_empty() {
+                ids.extend_from_slice(&self.large);
+                ids.sort_unstable();
+                ids.dedup();
+            }
             ids.into_iter()
                 .filter(|&i| intersects(self.rects[i], r))
                 .collect()
@@ -208,11 +212,18 @@ impl Router {
     pub fn route_all(mut self, links: &[Link]) -> BTreeMap<u128, Route> {
         // Reserve every terminal before routing any net. An early wire must
         // not consume the short escape corridor of a later port.
+        let mut terminals = HashSet::new();
         for l in links {
             for (a, b) in [
                 (l.start, [l.start[0] + LEAD, l.start[1]]),
                 ([l.end[0] - LEAD, l.end[1]], l.end),
             ] {
+                // A shared output contributes one identical reserved lead.
+                // Terminal constraints are Boolean, so multiplicity has no effect.
+                let key = (l.source, a.map(f32::to_bits), b.map(f32::to_bits));
+                if !terminals.insert(key) {
+                    continue;
+                }
                 self.wires.insert(bounds(a, b));
                 self.segments.push(Segment {
                     a,

@@ -400,6 +400,36 @@ impl SceneIndex {
     /// The index must correspond to the state immediately before the captured
     /// command. Document validation and revision checks remain the host's job.
     pub fn update(&mut self, doc: &Document, changes: &SceneChanges) -> SceneUpdate {
+        if changes.geometry_only
+            && !changes.rebuild
+            && changes.edges.is_empty()
+            && !changes.nodes.is_empty()
+        {
+            let rects: BTreeMap<_, _> = changes
+                .nodes
+                .iter()
+                .filter_map(|id| doc.placement().get(id).map(|rect| (*id, *rect)))
+                .collect();
+            if rects.len() == changes.nodes.len()
+                && rects.keys().all(|id| self.nodes.contains_key(id))
+                && (self.node_index.update_rects(&rects) || self.node_index.refit_rects(&rects))
+            {
+                for (id, rect) in rects {
+                    self.nodes.get_mut(&id).unwrap().rect = rect;
+                    self.node_cache.get_mut().remove(&id);
+                    for edge in self.incident.get(&id).into_iter().flatten() {
+                        self.edge_cache.get_mut().remove(edge);
+                    }
+                }
+                if changes.groups_changed || !doc.graph().groups().is_empty() {
+                    self.groups = crate::groups::GroupIndex::new(doc);
+                }
+                // Routing considers all obstacles, including moves unrelated to an endpoint.
+                // The final edge index is rebuilt once, from the routed bounds.
+                self.reroute();
+                return SceneUpdate::Incremental;
+            }
+        }
         let mut edge_ids = changes.edges.clone();
         let edge_limit = if changes.geometry_only {
             MAX_REFIT_EDGES
@@ -674,6 +704,7 @@ impl SceneIndex {
         };
         timings.edge_query_ms = elapsed_ms(start);
         let start = TIMED.then(Instant::now);
+        let mut blocked_ports = BTreeSet::new();
         for id in edges {
             let edge = &edge_map[&id];
             let points = &edge.points;
@@ -686,6 +717,10 @@ impl SceneIndex {
                     (edge.from.0, edge.from.1, true),
                     (edge.to.0, edge.to.1, false),
                 ] {
+                    // Multiple blocked branches from the same port share one warning.
+                    if !blocked_ports.insert((node_id, port, output)) {
+                        continue;
+                    }
                     let node = &self.nodes[&node_id];
                     let rect = preview
                         .placement
@@ -730,26 +765,32 @@ impl SceneIndex {
                         .unwrap_or_else(|| palette.tone(labels.tone))
                 });
             let color = color.linear();
-            let hit = self.edge_cache.borrow().get(&id).is_some_and(|c| {
+            let cache = self.edge_cache.borrow();
+            if let Some(cached) = cache.get(&id).filter(|c| {
                 c.points == *points
                     && c.bridges == edge.bridges
                     && c.zoom == viewport.zoom
                     && c.color == color
                     && c.width == width
-            });
-            if hit {
-                scene
-                    .quads
-                    .extend_from_slice(&self.edge_cache.borrow()[&id].quads);
+            }) {
+                scene.quads.extend_from_slice(&cached.quads);
                 scene.geometry_stats.reused_edges += 1;
             } else {
+                drop(cache);
                 let start = scene.quads.len();
-                let routed = studio_routing::Route {
-                    points: points.clone(),
-                    bridges: edge.bridges.clone(),
-                    blocked: edge.blocked,
+                let bridged;
+                let display = if edge.bridges.is_empty() {
+                    points.as_slice()
+                } else {
+                    bridged = studio_routing::Route {
+                        points: points.clone(),
+                        bridges: edge.bridges.clone(),
+                        blocked: edge.blocked,
+                    }
+                    .display_points();
+                    &bridged
                 };
-                for segment in routed.display_points().windows(2) {
+                for segment in display.windows(2) {
                     if segment[0] != segment[1] {
                         scene.quads.push(Quad::stroke(
                             segment[0],

@@ -2,6 +2,85 @@ use crate::*;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+const SNIPPET_LIMIT: usize = 256 * 1024;
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CircuitSnippet {
+    schema: u32,
+    root: String,
+    modules: BTreeMap<String, Arc<ModuleDefinition>>,
+}
+
+impl Document {
+    pub(crate) fn export_snippet(&self, root: &str) -> Result<String, String> {
+        let mut modules = BTreeMap::new();
+        let mut pending = vec![root];
+        while let Some(name) = pending.pop() {
+            if modules.contains_key(name) {
+                continue;
+            }
+            let definition = self
+                .modules
+                .get(name)
+                .ok_or_else(|| format!("Unknown snippet module: {name}"))?;
+            modules.insert(name.to_owned(), definition.clone());
+            pending.extend(
+                definition
+                    .nodes
+                    .iter()
+                    .filter_map(|node| match &node.config {
+                        NodeConfig::Module { definition, .. } => Some(definition.as_str()),
+                        _ => None,
+                    }),
+            );
+        }
+        let source = serde_json::to_string(&CircuitSnippet {
+            schema: 1,
+            root: root.into(),
+            modules,
+        })
+        .map_err(|error| error.to_string())?;
+        if source.len() > SNIPPET_LIMIT {
+            return Err("Circuit snippet exceeds 256 KiB".into());
+        }
+        Ok(source)
+    }
+
+    pub(crate) fn import_snippet(&self, source: &str) -> Result<Self, String> {
+        if source.len() > SNIPPET_LIMIT {
+            return Err("Circuit snippet exceeds 256 KiB".into());
+        }
+        let snippet: CircuitSnippet =
+            serde_json::from_str(source).map_err(|error| error.to_string())?;
+        if snippet.schema != 1 {
+            return Err("Unsupported circuit snippet format".into());
+        }
+        // Check the bundle independently so it cannot depend on the destination.
+        let bundle = Document {
+            name: snippet.root.clone(),
+            nodes: Vec::new().into(),
+            edges: Vec::new().into(),
+            modules: snippet.modules,
+        };
+        bundle.export_snippet(&snippet.root)?;
+        bundle.validate(false)?;
+
+        let mut next = self.clone();
+        for (name, definition) in bundle.modules {
+            if let Some(existing) = next.modules.get(&name) {
+                if existing != &definition {
+                    return Err(format!("Different module already exists: {name}"));
+                }
+            } else {
+                next.modules.insert(name, definition);
+            }
+        }
+        next.validate(false)?;
+        Ok(next)
+    }
+}
+
 impl ModuleDefinition {
     pub fn ports(&self) -> (Vec<ModulePort>, Vec<ModulePort>) {
         let ports = |kind| {
@@ -809,5 +888,24 @@ mod sequential_tests {
         assert_ne!(outer, copy);
         let (expanded, _) = nested.explode_module(&outer).unwrap();
         assert_eq!(tb.run(&expanded).unwrap().2.passed, checks.total);
+    }
+    #[test]
+    fn circuit_snippet_round_trips_nested_modules_and_rejects_conflicts() {
+        let base = Document::demo();
+        let (source, first) = base.group_module(&["add".into()], "Adder").unwrap();
+        let (source, _) = source.group_module(&[first], "Outer").unwrap();
+        let source = source.export_snippet("Outer").unwrap();
+        let imported = base.import_snippet(&source).unwrap();
+        assert_eq!(imported.nodes, base.nodes);
+        assert_eq!(imported.modules.len(), 2);
+        assert!(imported.instantiate_module("Outer", 0., 0.).is_ok());
+        assert_eq!(imported.import_snippet(&source).unwrap(), imported);
+
+        let (conflicting, _) = base.group_module(&["bit_and".into()], "Adder").unwrap();
+        assert!(conflicting
+            .import_snippet(&source)
+            .unwrap_err()
+            .contains("Adder"));
+        assert!(!conflicting.modules.contains_key("Outer"));
     }
 }

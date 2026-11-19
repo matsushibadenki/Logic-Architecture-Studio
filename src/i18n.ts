@@ -8,6 +8,10 @@ const en = {
   createModule: "Create module from selection",
   expandModule: "Expand module into editable nodes",
   instantiateModule: "Place module",
+  findSnippets: "Find circuit snippets",
+  importSnippet: "Import circuit snippet",
+  exportSnippet: "Export circuit snippet",
+  snippetTooLarge: "The snippet file exceeds 256 KiB.",
   moduleHint:
     "Create reusable modules from processing nodes. Top-level inputs/outputs stay outside. Modules can contain other modules. Double-click a module to edit its shared definition. Expand an instance to edit a separate copy.",
 
@@ -303,6 +307,10 @@ const ja: Dictionary = {
   createModule: "選択範囲をモジュール化",
   expandModule: "モジュールをノードへ展開",
   instantiateModule: "モジュールを配置",
+  findSnippets: "回路スニペットを検索",
+  importSnippet: "回路スニペットを読み込む",
+  exportSnippet: "回路スニペットを書き出す",
+  snippetTooLarge: "スニペットファイルが256 KiBを超えています。",
   moduleHint:
     "演算ノードの選択範囲から再利用できるモジュールを作成します。トップレベルの入出力は外側に保持します。モジュールを含めて再度まとめると入れ子にできます。モジュールをダブルクリックすると共有定義を編集できます。個別に編集する場合はインスタンスを展開します。",
 
@@ -598,6 +606,10 @@ const zh: Dictionary = {
   createModule: "将所选节点创建为模块",
   expandModule: "将模块展开为可编辑节点",
   instantiateModule: "放置模块",
+  findSnippets: "搜索电路片段",
+  importSnippet: "导入电路片段",
+  exportSnippet: "导出电路片段",
+  snippetTooLarge: "片段文件超过 256 KiB。",
   moduleHint:
     "将处理节点创建为可复用模块，顶层输入和输出保持在外部。模块可以包含其他模块。双击模块可编辑共享定义。要独立编辑某个实例，请先将其展开。",
 

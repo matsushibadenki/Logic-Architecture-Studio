@@ -2894,3 +2894,13 @@ html.toolbar-document,
   min-width: 0;
   max-width: min(190px, 100%);
 }
+
+.snippet-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.snippet-row .module-item {
+  flex: 1;
+  min-width: 0;
+}
