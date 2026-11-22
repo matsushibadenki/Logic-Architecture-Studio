@@ -1,7 +1,7 @@
 use crate::{LabelCatalog, TextLabel, Theme, labels::label_text};
 use std::{
     cell::RefCell,
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     time::Instant,
 };
 use unge_core::{Command, Document, Id, Locale, Rect, SpatialIndex, Viewport, port_anchor};
@@ -71,7 +71,6 @@ struct RenderNode {
     required_inputs: Vec<usize>,
     output_names: Vec<String>,
 }
-#[derive(Clone)]
 struct RenderEdge {
     points: Vec<[f32; 2]>,
     bridges: Vec<[f32; 2]>,
@@ -129,7 +128,7 @@ impl RenderEdge {
         })
     }
 }
-type NodeCacheKey = (Rect, bool, u32, u8, Theme, Option<crate::NodeLabels>, bool);
+type NodeCacheKey = (Rect, bool, u32, u8, Theme, Option<crate::NodeLabels>);
 struct CachedNode {
     key: NodeCacheKey,
     quads: Vec<Quad>,
@@ -158,8 +157,8 @@ pub struct SceneIndex {
     edge_index: SpatialIndex,
     incident: BTreeMap<Id, BTreeSet<Id>>,
     groups: crate::groups::GroupIndex,
-    node_cache: RefCell<BTreeMap<Id, CachedNode>>,
-    edge_cache: RefCell<BTreeMap<Id, CachedEdge>>,
+    node_cache: RefCell<HashMap<Id, CachedNode>>,
+    edge_cache: RefCell<HashMap<Id, CachedEdge>>,
 }
 /// Capture before consuming a Command; apply only after that edit commits.
 #[derive(Debug, Default)]
@@ -318,11 +317,11 @@ fn push_curve(scene: &mut Scene, points: [[f32; 2]; 4], zoom: f32, color: [f32; 
     });
 }
 impl SceneIndex {
-    fn route_edges(
+    fn routes(
         nodes: &BTreeMap<Id, RenderNode>,
-        edges: &mut BTreeMap<Id, RenderEdge>,
+        edges: &BTreeMap<Id, RenderEdge>,
         placement: &BTreeMap<Id, Rect>,
-    ) {
+    ) -> impl Iterator<Item = (Id, studio_routing::Route, Rect)> + use<> {
         let rect = |id: &Id| placement.get(id).copied().unwrap_or(nodes[id].rect);
         let obstacles = nodes
             .keys()
@@ -345,14 +344,25 @@ impl SceneIndex {
             })
             .collect();
         let mut routes = studio_routing::Router::new(obstacles).route_all(&links);
-        for link in links {
+        links.into_iter().map(move |link| {
             let route = routes.remove(&link.id).unwrap();
-            let edge = edges.get_mut(&Id::from_u128(link.id)).unwrap();
-            edge.bounds = if route.blocked {
+            let bounds = if route.blocked {
                 route_bounds(&[link.start, link.end])
             } else {
                 expanded(route_bounds(&route.points), 8.)
             };
+            (Id::from_u128(link.id), route, bounds)
+        })
+    }
+
+    fn route_edges(
+        nodes: &BTreeMap<Id, RenderNode>,
+        edges: &mut BTreeMap<Id, RenderEdge>,
+        placement: &BTreeMap<Id, Rect>,
+    ) {
+        for (id, route, bounds) in Self::routes(nodes, edges, placement) {
+            let edge = edges.get_mut(&id).unwrap();
+            edge.bounds = bounds;
             edge.points = route.points;
             edge.bridges = route.bridges;
             edge.blocked = route.blocked;
@@ -391,8 +401,8 @@ impl SceneIndex {
             node_index: SpatialIndex::new(doc),
             edge_index: SpatialIndex::from_rects(bounds),
             groups: crate::groups::GroupIndex::new(doc),
-            node_cache: RefCell::new(BTreeMap::new()),
-            edge_cache: RefCell::new(BTreeMap::new()),
+            node_cache: RefCell::new(HashMap::new()),
+            edge_cache: RefCell::new(HashMap::new()),
         };
         index.reroute();
         index
@@ -516,6 +526,7 @@ impl SceneIndex {
         // Moves keep endpoints/port membership unchanged.
         for id in edge_ids.iter().filter(|_| !changes.geometry_only) {
             if let Some(old) = self.edges.remove(id) {
+                self.node_cache.get_mut().remove(&old.to.0);
                 for node in [old.from.0, old.to.0] {
                     if let Some(set) = self.incident.get_mut(&node) {
                         set.remove(id);
@@ -537,6 +548,7 @@ impl SceneIndex {
         for (id, edge) in edges {
             if let Some(edge) = edge {
                 if !changes.geometry_only {
+                    self.node_cache.get_mut().remove(&edge.to.0);
                     for node in [edge.from.0, edge.to.0] {
                         self.incident.entry(node).or_default().insert(id);
                     }
@@ -687,32 +699,41 @@ impl SceneIndex {
         timings.groups_ms = elapsed_ms(start);
         let start = TIMED.then(Instant::now);
         let cable_area = expanded(area, wire_width(viewport.zoom) * 0.5 + 1.0 / viewport.zoom);
-        let preview_edges = (!preview.placement.is_empty()).then(|| {
-            let mut edges = self.edges.clone();
-            Self::route_edges(&self.nodes, &mut edges, &preview.placement);
-            edges
-        });
-        // A moved obstacle can displace a wire that has no endpoint on it.
-        let edge_map = preview_edges.as_ref().unwrap_or(&self.edges);
-        let edges: Vec<_> = if preview_edges.is_some() {
-            edge_map
-                .iter()
-                .filter_map(|(id, e)| e.bounds.intersects(cable_area).then_some(*id))
-                .collect()
+        // Preview routing uses the retained topology. A moved obstacle can
+        // displace a wire with neither endpoint on it.
+        let preview_routes: Vec<_> = if preview.placement.is_empty() {
+            Vec::new()
         } else {
-            self.edge_index.query(cable_area)
+            Self::routes(&self.nodes, &self.edges, &preview.placement)
+                .filter(|(_, _, bounds)| bounds.intersects(cable_area))
+                .collect()
         };
+        let committed_edges = if preview.placement.is_empty() {
+            self.edge_index.query(cable_area)
+        } else {
+            Vec::new()
+        };
+        let edges = committed_edges.into_iter().map(|id| (id, None)).chain(
+            preview_routes
+                .iter()
+                .map(|(id, route, _)| (*id, Some(route))),
+        );
         timings.edge_query_ms = elapsed_ms(start);
         let start = TIMED.then(Instant::now);
-        let mut blocked_ports = BTreeSet::new();
-        for id in edges {
-            let edge = &edge_map[&id];
-            let points = &edge.points;
-            let bounds = edge.bounds;
-            if !bounds.intersects(cable_area) {
+        let first_wire_label = scene.labels.len();
+        let mut blocked_ports = HashSet::new();
+        let warning_color = palette.cable_invalid.linear();
+        let stroke_width = wire_width(viewport.zoom);
+        for (id, preview_route) in edges {
+            let edge = &self.edges[&id];
+            let (points, bridges, blocked) = preview_route
+                .map_or((&edge.points, &edge.bridges, edge.blocked), |route| {
+                    (&route.points, &route.bridges, route.blocked)
+                });
+            if preview_route.is_none() && !edge.bounds.intersects(cable_area) {
                 continue;
             }
-            if edge.blocked {
+            if blocked {
                 for (node_id, port, output) in [
                     (edge.from.0, edge.from.1, true),
                     (edge.to.0, edge.to.1, false),
@@ -745,7 +766,7 @@ impl SceneIndex {
                         right_aligned: false,
                         centered: true,
                         bold: true,
-                        color: palette.cable_invalid.linear(),
+                        color: warning_color,
                         after_quad: scene.quads.len(),
                     });
                 }
@@ -755,8 +776,7 @@ impl SceneIndex {
                 .signal_width
                 .unwrap_or_else(|| signal.map_or(1, |label| label.signal_width))
                 .max(1);
-            let color = catalog
-                .get(&edge.source_type)
+            let color = signal
                 .filter(|labels| labels.color.is_some() || labels.tone != crate::NodeTone::Neutral)
                 .map_or(palette.edge, |labels| {
                     labels
@@ -768,7 +788,7 @@ impl SceneIndex {
             let cache = self.edge_cache.borrow();
             if let Some(cached) = cache.get(&id).filter(|c| {
                 c.points == *points
-                    && c.bridges == edge.bridges
+                    && c.bridges == *bridges
                     && c.zoom == viewport.zoom
                     && c.color == color
                     && c.width == width
@@ -779,32 +799,29 @@ impl SceneIndex {
                 drop(cache);
                 let start = scene.quads.len();
                 let bridged;
-                let display = if edge.bridges.is_empty() {
+                let display = if bridges.is_empty() {
                     points.as_slice()
                 } else {
                     bridged = studio_routing::Route {
                         points: points.clone(),
-                        bridges: edge.bridges.clone(),
-                        blocked: edge.blocked,
+                        bridges: bridges.clone(),
+                        blocked,
                     }
                     .display_points();
                     &bridged
                 };
                 for segment in display.windows(2) {
                     if segment[0] != segment[1] {
-                        scene.quads.push(Quad::stroke(
-                            segment[0],
-                            segment[1],
-                            color,
-                            wire_width(viewport.zoom),
-                        ));
+                        scene
+                            .quads
+                            .push(Quad::stroke(segment[0], segment[1], color, stroke_width));
                     }
                 }
                 self.edge_cache.borrow_mut().insert(
                     id,
                     CachedEdge {
                         points: points.clone(),
-                        bridges: edge.bridges.clone(),
+                        bridges: bridges.clone(),
                         zoom: viewport.zoom,
                         color,
                         width,
@@ -869,6 +886,14 @@ impl SceneIndex {
             }
             scene.visible_edges += 1;
         }
+        if viewport.zoom < 0.35 {
+            // At overview zoom the only wire labels are blocked-port warnings.
+            // Draw them together on top of the wires, below node geometry.
+            let after_wires = scene.quads.len();
+            for label in &mut scene.labels[first_wire_label..] {
+                label.after_quad = after_wires;
+            }
+        }
         timings.edge_geometry_ms = elapsed_ms(start);
         let start = TIMED.then(Instant::now);
         // Keep screen-sized overview ports visible when node bodies are offscreen.
@@ -888,33 +913,15 @@ impl SceneIndex {
             let selected = selection.contains(&id);
             let tiny = viewport.zoom < 0.35;
             let labels = catalog.get(&node.type_id);
-            let tone = labels
-                .and_then(|l| l.color)
-                .map(crate::ThemeColor::new)
-                .unwrap_or_else(|| {
-                    palette.tone(labels.map_or(crate::NodeTone::Neutral, |l| l.tone))
-                })
-                .linear();
-            let missing_input = node.required_inputs.iter().any(|port| {
-                !self
-                    .incident
-                    .get(&id)
-                    .into_iter()
-                    .flatten()
-                    .any(|edge| self.edges[edge].to == (id, *port))
-            });
-            let hit = self.node_cache.borrow().get(&id).is_some_and(|c| {
+            let cache = self.node_cache.borrow();
+            if let Some(cached) = cache.get(&id).filter(|c| {
                 c.key.0 == rect
                     && c.key.1 == selected
                     && c.key.2 == viewport.zoom.to_bits()
                     && c.key.3 == locale as u8
                     && c.key.4 == theme
                     && c.key.5.as_ref() == labels
-                    && c.key.6 == missing_input
-            });
-            if hit {
-                let cache = self.node_cache.borrow();
-                let cached = &cache[&id];
+            }) {
                 let base = scene.quads.len();
                 scene.quads.extend_from_slice(&cached.quads);
                 scene
@@ -927,6 +934,22 @@ impl SceneIndex {
                 scene.visible_nodes += 1;
                 continue;
             }
+            drop(cache);
+            let missing_input = node.required_inputs.iter().any(|port| {
+                !self
+                    .incident
+                    .get(&id)
+                    .into_iter()
+                    .flatten()
+                    .any(|edge| self.edges[edge].to == (id, *port))
+            });
+            let tone = labels
+                .and_then(|l| l.color)
+                .map(crate::ThemeColor::new)
+                .unwrap_or_else(|| {
+                    palette.tone(labels.map_or(crate::NodeTone::Neutral, |l| l.tone))
+                })
+                .linear();
             let frame_free = labels.is_some_and(|l| l.gate.is_some() && l.hide_frame);
             let outline_gate =
                 tiny && theme == Theme::Light && labels.and_then(|l| l.gate).is_some();
@@ -1425,7 +1448,6 @@ impl SceneIndex {
                         locale as u8,
                         theme,
                         labels.cloned(),
-                        missing_input,
                     ),
                     quads: scene.quads[qstart..].to_vec(),
                     labels: scene.labels[lstart..]

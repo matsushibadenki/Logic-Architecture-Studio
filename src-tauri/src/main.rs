@@ -1,4 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#[cfg(target_os = "macos")]
+mod drag_measurement;
 mod layout_store;
 mod mcp;
 mod measurement;
@@ -308,9 +310,16 @@ fn main() {
             host.as_ref().hide()?;
             let window = host.as_ref().window();
             let size = window.inner_size()?;
-            let renderer =
+            #[cfg(target_os = "macos")]
+            let drag_trace = drag_measurement::install(&window).map_err(std::io::Error::other)?;
+            #[allow(unused_mut)]
+            let mut renderer =
                 studio_renderer::Renderer::new(Arc::new(window.clone()), size.width, size.height)
                     .map_err(std::io::Error::other)?;
+            #[cfg(target_os = "macos")]
+            if drag_trace.is_some() && std::env::var_os("LAS_NATIVE_DRAG_SHALLOW_QUEUE").is_some() {
+                renderer.set_frame_latency(1);
+            }
             app.manage(Arc::new(Mutex::new(native::Native {
                 renderer,
                 dirty: true,
@@ -373,6 +382,10 @@ fn main() {
                 )?;
             }
             app.wry_plugin(native::Bridge(app.handle().clone()));
+            #[cfg(target_os = "macos")]
+            if let Some(path) = drag_trace {
+                drag_measurement::start(app.handle().clone(), path);
+            }
             let handle = app.handle().clone();
             std::thread::spawn(move || loop {
                 let _ = receiver.recv_timeout(Duration::from_millis(100));

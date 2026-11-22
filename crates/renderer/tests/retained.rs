@@ -67,6 +67,14 @@ fn delta_matches_full_rebuild_across_edits_import_undo_and_reorder() {
     doc.edges[0].from = "b".into();
     cache.sync(&doc).unwrap();
     compare(&cache, &doc);
+    let connected = doc.clone();
+    let removed = doc.edges[0].id.clone();
+    doc.edges.retain(|edge| edge.id != removed);
+    cache.sync(&doc).unwrap();
+    compare(&cache, &doc);
+    doc = connected;
+    cache.sync(&doc).unwrap();
+    compare(&cache, &doc);
     doc.nodes.reverse();
     doc.edges.reverse();
     cache.sync(&doc).unwrap();

@@ -28,6 +28,9 @@ fn elapsed_ms(start: Option<Instant>) -> f64 {
     start.map_or(0., |start| start.elapsed().as_secs_f64() * 1000.)
 }
 
+/// Host observer for the GPU execution interval in the Metal host clock.
+pub type GpuExecutionObserver = Box<dyn Fn(f64, f64) + Send + 'static>;
+
 /// Native surface owned by the Rust application, independent of any WebView.
 pub struct SurfaceRenderer {
     surface: wgpu::Surface<'static>,
@@ -103,6 +106,12 @@ impl SurfaceRenderer {
             renderer,
             suspended: size.contains(&0),
         })
+    }
+    pub fn set_frame_latency(&mut self, frames: u32) {
+        self.config.desired_maximum_frame_latency = frames;
+        if !self.suspended {
+            self.surface.configure(&self.device, &self.config);
+        }
     }
     pub fn adapter_info(&self) -> &wgpu::AdapterInfo {
         &self.adapter_info
@@ -189,7 +198,7 @@ impl SurfaceRenderer {
         viewport: Viewport,
         graph_size: [u32; 2],
     ) -> Result<bool, String> {
-        self.draw_region_impl::<false>(scene, viewport, graph_size)
+        self.draw_region_impl::<false>(scene, viewport, graph_size, None)
             .map(|sample| sample.is_some())
     }
     /// Opt-in CPU measurement of the same path as `draw`. A skipped frame is
@@ -208,13 +217,23 @@ impl SurfaceRenderer {
         viewport: Viewport,
         graph_size: [u32; 2],
     ) -> Result<Option<CpuSurfaceFrameTimings>, String> {
-        self.draw_region_impl::<true>(scene, viewport, graph_size)
+        self.draw_region_impl::<true>(scene, viewport, graph_size, None)
+    }
+    pub fn draw_region_observed(
+        &mut self,
+        scene: &Scene,
+        viewport: Viewport,
+        graph_size: [u32; 2],
+        observe: GpuExecutionObserver,
+    ) -> Result<Option<CpuSurfaceFrameTimings>, String> {
+        self.draw_region_impl::<true>(scene, viewport, graph_size, Some(observe))
     }
     fn draw_region_impl<const TIMED: bool>(
         &mut self,
         scene: &Scene,
         viewport: Viewport,
         graph_size: [u32; 2],
+        observe: Option<GpuExecutionObserver>,
     ) -> Result<Option<CpuSurfaceFrameTimings>, String> {
         let total = TIMED.then(Instant::now);
         if graph_size[0] > self.config.width || graph_size[1] > self.config.height {
@@ -243,7 +262,28 @@ impl SurfaceRenderer {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         self.renderer
             .render_in_region(&mut encoder, &view, graph_size);
-        self.queue.submit([encoder.finish()]);
+        #[cfg(target_os = "macos")]
+        if let Some(observe) = observe {
+            let mut before = self.device.create_command_encoder(&Default::default());
+            let mut after = self.device.create_command_encoder(&Default::default());
+            let start_at = std::sync::Arc::new(std::sync::Mutex::new(None));
+            let begin = start_at.clone();
+            metal_gpu_marker(&mut before, move |end| *begin.lock().unwrap() = Some(end));
+            metal_gpu_marker(&mut after, move |end| {
+                if let Some(start) = *start_at.lock().unwrap() {
+                    observe(start, end);
+                }
+            });
+            self.queue
+                .submit([before.finish(), encoder.finish(), after.finish()]);
+        } else {
+            self.queue.submit([encoder.finish()]);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            drop(observe);
+            self.queue.submit([encoder.finish()]);
+        }
         let encode_submit_ms = elapsed_ms(encode);
         let present = TIMED.then(Instant::now);
         frame.present();
@@ -254,5 +294,26 @@ impl SurfaceRenderer {
             present_call_ms: elapsed_ms(present),
             total_ms: elapsed_ms(total),
         }))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn metal_gpu_marker(encoder: &mut wgpu::CommandEncoder, mark: impl Fn(f64) + Send + 'static) {
+    // SAFETY: Only register a completion handler. wgpu still owns and
+    // submits the buffer, and Metal holds the copied block to completion.
+    unsafe {
+        encoder.as_hal_mut::<wgpu::hal::api::Metal, _, _>(|raw| {
+            if let Some(buffer) = raw.and_then(|raw| raw.raw_command_buffer()) {
+                let handler = block::ConcreteBlock::new(move |buffer: &metal::CommandBufferRef| {
+                    use objc2::runtime::AnyObject;
+                    // metal-rs holds the same Objective-C command buffer ABI.
+                    let object = &*std::ptr::from_ref(buffer).cast::<AnyObject>();
+                    let end: f64 = objc2::msg_send![object, GPUEndTime];
+                    mark(end);
+                })
+                .copy();
+                buffer.add_completed_handler(&handler);
+            }
+        });
     }
 }

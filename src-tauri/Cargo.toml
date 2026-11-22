@@ -19,4 +19,10 @@ custom-protocol = ["tauri/custom-protocol"]
 [target.'cfg(target_os = "macos")'.dependencies]
 rfd = { version = "=0.15.4", default-features = false }
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "NSEvent", "NSResponder", "NSView", "NSWindow", "std"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "NSEvent", "NSResponder", "NSView", "NSWindow", "objc2-quartz-core", "std"] }
+block2 = "0.6"
+objc2-quartz-core = { version = "0.3", default-features = false, features = ["CABase", "CALayer", "CAMetalLayer", "objc2-core-foundation", "objc2-metal", "std"] }
+objc2-metal = { version = "0.3", default-features = false, features = ["MTLDrawable", "block2", "objc2-core-foundation", "std"] }
+objc2-core-foundation = "0.3"
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["CGDirectDisplay", "std"] }
+objc2-core-video = { version = "0.3", default-features = false, features = ["CVBase", "CVDisplayLink", "CVHostTime", "CVReturn", "block2", "objc2", "objc2-core-graphics", "std"] }

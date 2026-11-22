@@ -1,5 +1,6 @@
 """Seed an isolated workspace or summarize live UI traces; never drives the UI."""
 import argparse
+import bisect
 import json
 import math
 import statistics
@@ -62,6 +63,83 @@ def summarize(paths, out, moves=12):
               "native p50", round(r["native_present_request_ms"]["p50"], 2))
 
 
+def summarize_native_drag(paths):
+    reference = None
+    results = []
+    for path in paths:
+        trace = json.loads(path.read_text())
+        inputs = trace.get("inputs", [])
+        if trace.get("error") or trace.get("errors") or len(inputs) != 250:
+            raise SystemExit(f"Incomplete run: {path}")
+        positions = [(sample["index"], sample["offset"]) for sample in inputs]
+        condition = [trace[key] for key in ("nodes", "moved", "target_hz", "zoom", "canvas_window_px")]
+        condition.append(positions)
+        if reference is not None and condition != reference:
+            raise SystemExit(f"Mismatched replay conditions: {path}")
+        reference = condition
+        times = [sample["input_at"] for sample in inputs]
+        intervals = [(b - a) * 1000 for a, b in zip(times, times[1:])]
+        frames = trace["frames"]
+        shown = [frame for frame in frames if frame["presented_at"] > 0]
+        if not shown or any(times[frame["input"]] > frame["delivered_at"] or
+                            frame["delivered_at"] > frame["presented_at"] for frame in shown):
+            raise SystemExit(f"No valid Metal presentation timing: {path}")
+        result = dict(
+            trace=str(path), input_hz=(len(times) - 1) / (times[-1] - times[0]),
+            interval_ms=stats(intervals), presented_frames=len(shown),
+            skipped_drawables=len(frames) - len(shown),
+            input_to_display_ms=stats([
+                (frame["presented_at"] - times[frame["input"]]) * 1000 for frame in shown]),
+        )
+        if "stages" in trace:
+            marks = {(mark["input"], mark["stage"]): mark for mark in trace["stages"]}
+            breakdown = []
+            ticks = sorted({mark["target_at"] for mark in trace.get("refresh", [])})
+            if len(ticks) >= 2:
+                result["display"] = trace["display"]
+                result["present_paced"] = trace["present_paced"]
+                result["refresh_interval_ms"] = stats([
+                    (b - a) * 1000 for a, b in zip(ticks, ticks[1:])])
+            for frame in shown:
+                index = frame["input"]
+                cpu = marks.get((index, "cpu"))
+                gpu = marks.get((index, "gpu"))
+                if (not cpu or not gpu or not
+                        frame["delivered_at"] <= gpu["start_at"] <= gpu["end_at"] <= frame["presented_at"]):
+                    raise SystemExit(f"Missing or invalid stage timing for input {index}: {path}")
+                surface = cpu["surface"]
+                breakdown.append(dict(
+                    input_wait_ms=(frame["delivered_at"] - times[index]) * 1000,
+                    scene_ms=cpu["assembly_ms"],
+                    acquire_ms=surface["acquire_ms"],
+                    prepare_ms=surface["prepare_ms"],
+                    encode_submit_ms=surface["encode_submit_ms"],
+                    pre_gpu_ms=(gpu["start_at"] - frame["delivered_at"]) * 1000 - cpu["assembly_ms"],
+                    gpu_ms=(gpu["end_at"] - gpu["start_at"]) * 1000,
+                    display_wait_ms=(frame["presented_at"] - gpu["end_at"]) * 1000,
+                    total_ms=(frame["presented_at"] - times[index]) * 1000,
+                ))
+                if len(ticks) >= 2:
+                    gpu_end = gpu["end_at"]
+                    shown_at = frame["presented_at"]
+                    first = bisect.bisect_left(ticks, gpu_end)
+                    if 0 < first < len(ticks) and shown_at <= ticks[-1]:
+                        # Allow for sub-millisecond disagreement between the
+                        # display clock's target and Metal's presented time.
+                        count = bisect.bisect_left(ticks, shown_at - .001) - first
+                        breakdown[-1].update(
+                            next_refresh_ms=(ticks[first] - gpu_end) * 1000,
+                            extra_refreshes=max(0, count),
+                        )
+            result["frame_latency"] = trace["frame_latency"]
+            result["stages"] = {key: stats([row[key] for row in breakdown if key in row])
+                                for key in sorted(set().union(*breakdown))}
+            ranked = sorted(breakdown, key=lambda row: row["total_ms"])
+            result["p95_frame_breakdown"] = ranked[math.ceil(len(ranked) * .95) - 1]
+        results.append(result)
+    print(json.dumps(results, indent=2))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -73,8 +151,12 @@ if __name__ == "__main__":
     report.add_argument("traces", nargs="+", type=Path)
     report.add_argument("--out", type=Path, required=True)
     report.add_argument("--moves", type=int, default=12)
+    native_drag = commands.add_parser("summarize-native-drag")
+    native_drag.add_argument("traces", nargs="+", type=Path)
     args = parser.parse_args()
     if args.command == "prepare":
         prepare(args.root, args.nodes, args.wide_fanout)
-    else:
+    elif args.command == "summarize":
         summarize(args.traces, args.out, args.moves)
+    else:
+        summarize_native_drag(args.traces)

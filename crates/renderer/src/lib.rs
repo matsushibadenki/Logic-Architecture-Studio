@@ -18,7 +18,7 @@ use unge_render::{
     LabelCatalog, LabelText, NodeLabels, NodeTone, SceneIndex, SurfaceRenderer, Theme,
 };
 
-pub use design_core::{node_height, NODE_WIDTH};
+pub use design_core::{NODE_WIDTH, node_height};
 fn text(en: &str, ja: &str, zh: &str) -> LabelText {
     LabelText {
         en: en.into(),
@@ -282,6 +282,8 @@ struct SignalSample {
     values: BTreeMap<String, String>,
     register_d: BTreeMap<String, String>,
 }
+pub use unge_render::{CpuSurfaceFrameTimings, GpuExecutionObserver};
+
 pub struct Renderer {
     pub dock_target: Option<[f32; 4]>,
     surface: SurfaceRenderer,
@@ -354,6 +356,9 @@ impl Renderer {
                     .is_none_or(|v| !v.eq_ignore_ascii_case(color))
             })
             .collect();
+    }
+    pub fn set_frame_latency(&mut self, frames: u32) {
+        self.surface.set_frame_latency(frames);
     }
     pub fn resize(&mut self, width: u32, height: u32) {
         if self.size == [width, height] {
@@ -446,7 +451,8 @@ impl Renderer {
         view: &editor::EditorView,
         graph: [u32; 2],
         revision: u64,
-    ) -> Result<(), String> {
+        observe: Option<unge_render::GpuExecutionObserver>,
+    ) -> Result<Option<(f64, unge_render::CpuSurfaceFrameTimings)>, String> {
         self.sync_document(document)?;
         let projection = self.projection.as_mut().unwrap();
         if self
@@ -479,6 +485,7 @@ impl Renderer {
                 self.displayed_sample_revision = Some(revision);
             }
         }
+        let assembly = observe.as_ref().map(|_| std::time::Instant::now());
         let mut scene = projection
             .index
             .scene_with_theme(
@@ -506,8 +513,15 @@ impl Renderer {
                 params: [0., 6., 0., 0.],
             });
         }
+        if let Some(observe) = observe {
+            let assembly_ms = assembly.unwrap().elapsed().as_secs_f64() * 1000.;
+            return Ok(self
+                .surface
+                .draw_region_observed(&scene, view.viewport, graph, observe)?
+                .map(|surface| (assembly_ms, surface)));
+        }
         self.surface.draw_region(&scene, view.viewport, graph)?;
-        Ok(())
+        Ok(None)
     }
 }
 #[cfg(test)]

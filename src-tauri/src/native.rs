@@ -290,13 +290,22 @@ pub fn redraw(app: &tauri::AppHandle) {
     n.graph_rect = rect;
     n.view.viewport.size = [size.width as f32, size.height as f32];
     let Native { renderer, view, .. } = &mut *n;
+    #[cfg(target_os = "macos")]
+    let observe = super::drag_measurement::gpu_observer();
+    #[cfg(not(target_os = "macos"))]
+    let observe = None;
     let result = renderer.draw_editor(
         doc,
         s["locale"].as_str().unwrap_or("ja"),
         view,
         [size.width, size.height],
         s["revision"].as_u64().unwrap_or(0),
+        observe,
     );
+    #[cfg(target_os = "macos")]
+    if let Ok(Some((assembly_ms, surface))) = &result {
+        super::drag_measurement::cpu_sample(*assembly_ms, surface);
+    }
     if result.is_ok() {
         super::measurement::native(app, s["revision"].as_u64().unwrap_or(0));
     }

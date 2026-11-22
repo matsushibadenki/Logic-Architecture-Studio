@@ -102,8 +102,13 @@
 - 🟢 [Done] Suppress stale canonical presentation after accepted native gestures; 2,000-node × 120 matching sequential moves and editor/panel/restart QA in docs/SPARSE-MOVE-PERFORMANCE.md.
 - 🟢 [Done] Release Metal benchmark for 2,000 nodes, 1,998-way fanout and simultaneous moves across four entity blocks. Separately measures retained sync and scene assembly, with full-rebuild equivalence on every frame. See docs/PERFORMANCE.md.
 - 🟢 [Done] Reuse retained edge topology for position-only updates, deduplicate shared routing reservations and port warnings, and batch native drag redraws at the event-loop boundary. See docs/PERFORMANCE.md for the A/B results.
-- 🟠 [Next] Reduce the remaining wide-fanout overview CPU assembly cost. The first A/B run reduced glyph uploads, while CPU assembly took longer.
-- ⭕️ [Pending] Capture matched macOS group-drag traces with measured pointer event rates and preview-frame latency under saturated input.
+- 🟢 [Done] Profile wide-fanout overview assembly by stage and reduce wire-cache, warning deduplication and drag-preview routing work. Run matched 250 Hz group-drag replay through the renderer on Apple M4 Metal. See docs/PERFORMANCE.md.
+- 🟢 [Done] Profile slow overview frames with wall and macOS thread CPU time. Keep missing-input checks off the retained-node cache hit path and invalidate the affected destination on topology changes.
+- 🟢 [Done] Compare matched 250 Hz in-app group-drag replay through actual macOS window presentation using Metal drawable timestamps. See docs/PERFORMANCE.md for the measured latency and frame counts.
+- 🟢 [Done] Trace per-preview input wait, CPU assembly, Metal GPU execution interval and display wait. Compare overview wire-warning batching and diagnose drawable backpressure in the shallow-queue trial.
+- 🟢 [Done] Correlate CoreVideo refresh timing with Metal drawable presentation. Compare opt-in single-in-flight preview pacing at 250 Hz on macOS and document its latency and throughput tradeoff.
+- 🟠 [Next] Reduce the window presentation tail under sustained drag input. Track display wait and drawable acquisition together when evaluating scheduling changes.
+- ⭕️ [Pending] Measure physical pointing-device and AppKit/Tao input dispatch through presentation.
 - 🟢 [Done] Native left/right/bottom panel strips, same-WebView floating/reparenting, hide/reopen toolbar and OS-close handling.
 - 🟢 [Done] macOS live QA for library, inspector and results: all dock destinations, floating/redocking, panel close/reopen, floating OS-close/reopen.
 - ⭕️ [Pending] Physical multi-monitor/DPI changes and minimize/restore QA.

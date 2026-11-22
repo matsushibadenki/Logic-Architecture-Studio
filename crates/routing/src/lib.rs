@@ -243,12 +243,29 @@ impl Router {
                 .then(a.end[1].total_cmp(&b.end[1]))
                 .then(a.id.cmp(&b.id))
         });
-        links.iter().map(|l| (l.id, self.route(*l))).collect()
+        let mut last_source = None;
+        links
+            .into_iter()
+            .map(|link| {
+                // Only the immutable obstacle index participates in this check.
+                // Branches from the same anchor can share the result.
+                let key = (link.source.0, link.start.map(f32::to_bits));
+                let a = [link.start[0] + LEAD, link.start[1]];
+                let source_clear = match last_source {
+                    Some((previous, clear)) if previous == key => clear,
+                    _ => {
+                        let clear = self.clear(link.start, a, Some(link.source.0));
+                        last_source = Some((key, clear));
+                        clear
+                    }
+                };
+                (link.id, self.route(link, a, source_clear))
+            })
+            .collect()
     }
-    fn route(&mut self, l: Link) -> Route {
-        let a = [l.start[0] + LEAD, l.start[1]];
+    fn route(&mut self, l: Link, a: Point, source_clear: bool) -> Route {
         let b = [l.end[0] - LEAD, l.end[1]];
-        if !self.clear(l.start, a, Some(l.source.0)) || !self.clear(b, l.end, Some(l.target.0)) {
+        if !source_clear || !self.clear(b, l.end, Some(l.target.0)) {
             return Route {
                 blocked: true,
                 ..Default::default()
