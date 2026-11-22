@@ -439,9 +439,21 @@ impl TextRenderer {
         scale: f32,
     ) -> Result<Vec<GlyphInstance>> {
         let mut instances = Vec::new();
+        let mut previous_layout: Option<(&TextLabel, Arc<Line>)> = None;
+        let mut previous_ink_bounds = None;
         self.stats.missing_glyphs = 0;
         for label in &scene.labels {
-            let line = self.line(label);
+            // Dense overview scenes repeat the same short symbols and warnings.
+            // Reuse their shaped line without another owned key and cache lookup.
+            if previous_layout.as_ref().is_none_or(|(previous, _)| {
+                previous.text != label.text
+                    || previous.font_size != label.font_size
+                    || previous.bold != label.bold
+            }) {
+                previous_layout = Some((label, self.line(label)));
+                previous_ink_bounds = None;
+            }
+            let line = &previous_layout.as_ref().unwrap().1;
             if line.glyphs.is_empty() {
                 self.stats.missing_glyphs +=
                     label.text.chars().filter(|c| !c.is_whitespace()).count();
@@ -468,27 +480,30 @@ impl TextRenderer {
             if label.centered {
                 // Ink bounds, rather than line height or guessed offsets, also
                 // center operators such as + and ^ with different baselines.
-                let mut bounds: Option<[f32; 4]> = None;
-                for glyph in &line.glyphs {
-                    let physical =
-                        glyph.physical((0.0, line.baseline * raster_scale), raster_scale);
-                    if let Some(g) = self.glyph(queue, physical.cache_key)? {
-                        if g.width == 0 || g.height == 0 {
-                            continue;
-                        }
-                        let x = (physical.x as f32 + g.left as f32) * magnify;
-                        let y = (physical.y as f32 - g.top as f32) * magnify;
-                        let right = x + g.width as f32 * magnify;
-                        let bottom = y + g.height as f32 * magnify;
-                        bounds = Some(match bounds {
-                            Some(b) => {
-                                [b[0].min(x), b[1].min(y), b[2].max(right), b[3].max(bottom)]
+                if previous_ink_bounds.is_none() {
+                    let mut bounds: Option<[f32; 4]> = None;
+                    for glyph in &line.glyphs {
+                        let physical =
+                            glyph.physical((0.0, line.baseline * raster_scale), raster_scale);
+                        if let Some(g) = self.glyph(queue, physical.cache_key)? {
+                            if g.width == 0 || g.height == 0 {
+                                continue;
                             }
-                            None => [x, y, right, bottom],
-                        });
+                            let x = (physical.x as f32 + g.left as f32) * magnify;
+                            let y = (physical.y as f32 - g.top as f32) * magnify;
+                            let right = x + g.width as f32 * magnify;
+                            let bottom = y + g.height as f32 * magnify;
+                            bounds = Some(match bounds {
+                                Some(b) => {
+                                    [b[0].min(x), b[1].min(y), b[2].max(right), b[3].max(bottom)]
+                                }
+                                None => [x, y, right, bottom],
+                            });
+                        }
                     }
+                    previous_ink_bounds = Some(bounds);
                 }
-                if let Some(b) = bounds {
+                if let Some(b) = previous_ink_bounds.flatten() {
                     align = (label.rect.width * scale - (b[2] - b[0])) * 0.5 - b[0];
                     vertical_align = (label.rect.height * scale - (b[3] - b[1])) * 0.5 - b[1];
                 }

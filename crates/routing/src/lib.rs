@@ -69,6 +69,29 @@ impl Index {
             self.large.push(id);
         }
     }
+    // Boolean intersection checks can stop at the first hit. An obstacle
+    // indexed in multiple cells can be visited more than once without
+    // changing the result, so this path needs no sorted candidate buffer.
+    fn any_intersection(&self, r: Bounds, mut test: impl FnMut(usize) -> bool) -> bool {
+        let mut hit = |id: usize| intersects(self.rects[id], r) && test(id);
+        if let Some((x, y, xx, yy)) = cells(r) {
+            for i in x..=xx {
+                for j in y..=yy {
+                    if self
+                        .cells
+                        .get(&(i, j))
+                        .is_some_and(|ids| ids.iter().copied().any(&mut hit))
+                    {
+                        return true;
+                    }
+                }
+            }
+            self.large.iter().copied().any(hit)
+        } else {
+            (0..self.rects.len()).any(hit)
+        }
+    }
+
     fn query(&self, r: Bounds) -> Vec<usize> {
         if let Some((x, y, xx, yy)) = cells(r) {
             let mut ids = Vec::new();
@@ -159,6 +182,16 @@ fn simplify(points: Vec<Point>) -> Vec<Point> {
     }
     out
 }
+#[derive(Default)]
+struct SearchScratch {
+    xs: Vec<f32>,
+    ys: Vec<f32>,
+    dist: Vec<f32>,
+    prev: Vec<usize>,
+    heap: BinaryHeap<Visit>,
+    checks: HashMap<usize, Option<f32>>,
+}
+
 impl Router {
     pub fn new(obstacles: Vec<Obstacle>) -> Self {
         let mut nodes = Index::default();
@@ -173,17 +206,16 @@ impl Router {
         }
     }
     fn clear(&self, a: Point, b: Point, except: Option<u128>) -> bool {
-        self.nodes
-            .query(bounds(a, b))
-            .into_iter()
-            .all(|i| Some(self.obstacles[i].id) == except || !hits(a, b, self.nodes.rects[i]))
+        !self.nodes.any_intersection(bounds(a, b), |i| {
+            Some(self.obstacles[i].id) != except && hits(a, b, self.nodes.rects[i])
+        })
     }
     fn wire_cost(&self, a: Point, b: Point, net: (u128, usize), crossings: bool) -> Option<f32> {
-        let mut cost = 0.;
-        for i in self.wires.query(grow(bounds(a, b), CLEARANCE)) {
-            let s = self.segments[i];
+        let region = grow(bounds(a, b), CLEARANCE);
+        let check = |i| {
+            let s: Segment = self.segments[i];
             if s.net == net {
-                continue;
+                return Some(0.);
             }
             if (a[1] == b[1]) == (s.a[1] == s.b[1]) {
                 let axis = usize::from(a[1] == b[1]);
@@ -199,10 +231,20 @@ impl Router {
                 if s.terminal || !crossings || distance(p, s.a) < 8. || distance(p, s.b) < 8. {
                     return None;
                 }
-                cost += 1200.;
+                return Some(1200.);
             }
+            Some(0.)
+        };
+        if !crossings {
+            // This pass only rejects blocked segments. Duplicate visits do
+            // not matter and the first conflict can end the query.
+            return (!self.wires.any_intersection(region, |i| check(i).is_none())).then_some(0.);
         }
-        Some(cost)
+        // A crossing contributes a penalty once, even across grid cells.
+        self.wires
+            .query(region)
+            .into_iter()
+            .try_fold(0., |cost, i| check(i).map(|penalty| cost + penalty))
     }
     fn path_clear(&self, p: &[Point], net: (u128, usize), crossings: bool) -> bool {
         p.windows(2).all(|s| {
@@ -244,6 +286,7 @@ impl Router {
                 .then(a.id.cmp(&b.id))
         });
         let mut last_source = None;
+        let mut scratch = SearchScratch::default();
         links
             .into_iter()
             .map(|link| {
@@ -259,11 +302,17 @@ impl Router {
                         clear
                     }
                 };
-                (link.id, self.route(link, a, source_clear))
+                (link.id, self.route(link, a, source_clear, &mut scratch))
             })
             .collect()
     }
-    fn route(&mut self, l: Link, a: Point, source_clear: bool) -> Route {
+    fn route(
+        &mut self,
+        l: Link,
+        a: Point,
+        source_clear: bool,
+        scratch: &mut SearchScratch,
+    ) -> Route {
         let b = [l.end[0] - LEAD, l.end[1]];
         if !source_clear || !self.clear(b, l.end, Some(l.target.0)) {
             return Route {
@@ -271,28 +320,36 @@ impl Router {
                 ..Default::default()
             };
         }
-        let mut result = None;
+        let leads_clear = |crossings| {
+            self.wire_cost(l.start, a, l.source, crossings).is_some()
+                && self.wire_cost(b, l.end, l.source, crossings).is_some()
+        };
         let mid = (a[0] + b[0]) * 0.5;
-        // Cheap common case before building a visibility graph.
-        let direct = vec![a, [mid, a[1]], [mid, b[1]], b];
-        if self.path_clear(&direct, l.source, false)
-            && self.wire_cost(l.start, a, l.source, false).is_some()
-            && self.wire_cost(b, l.end, l.source, false).is_some()
-        {
-            result = Some(direct);
-        }
+        let direct = [a, [mid, a[1]], [mid, b[1]], b];
+        // Both the direct path and first search pass require the same leads.
+        let clear_without_crossings = leads_clear(false);
+        let mut result = (clear_without_crossings && self.path_clear(&direct, l.source, false))
+            .then(|| direct.to_vec());
         for crossings in [false, true] {
             if result.is_some() {
                 break;
             }
-            if self.wire_cost(l.start, a, l.source, crossings).is_none()
-                || self.wire_cost(b, l.end, l.source, crossings).is_none()
-            {
+            if !(if crossings {
+                leads_clear(true)
+            } else {
+                clear_without_crossings
+            }) {
                 continue;
             }
             for margin in [96., 384., 1536.] {
-                if let Some(p) = self.search(a, b, l.source, grow(bounds(a, b), margin), crossings)
-                {
+                if let Some(p) = self.search(
+                    a,
+                    b,
+                    l.source,
+                    grow(bounds(a, b), margin),
+                    crossings,
+                    scratch,
+                ) {
                     result = Some(p);
                     break;
                 }
@@ -342,9 +399,20 @@ impl Router {
         net: (u128, usize),
         region: Bounds,
         crossings: bool,
+        scratch: &mut SearchScratch,
     ) -> Option<Vec<Point>> {
-        let mut xs = vec![a[0], b[0], region[0], region[0] + region[2]];
-        let mut ys = vec![a[1], b[1], region[1], region[1] + region[3]];
+        let SearchScratch {
+            xs,
+            ys,
+            dist,
+            prev,
+            heap,
+            checks,
+        } = scratch;
+        xs.clear();
+        ys.clear();
+        xs.extend([a[0], b[0], region[0], region[0] + region[2]]);
+        ys.extend([a[1], b[1], region[1], region[1] + region[3]]);
         for i in self.nodes.query(region) {
             let r = self.nodes.rects[i];
             xs.extend([r[0], r[0] + r[2]]);
@@ -365,8 +433,8 @@ impl Router {
             v.sort_by(f32::total_cmp);
             v.dedup();
         };
-        clean(&mut xs, region[0], region[0] + region[2]);
-        clean(&mut ys, region[1], region[1] + region[3]);
+        clean(xs, region[0], region[0] + region[2]);
+        clean(ys, region[1], region[1] + region[3]);
         let w = xs.len();
         let h = ys.len();
         if w * h > MAX_GRID {
@@ -377,9 +445,12 @@ impl Router {
             + xs.binary_search_by(|v| v.total_cmp(&a[0])).ok()?;
         let goal = ys.binary_search_by(|v| v.total_cmp(&b[1])).ok()? * w
             + xs.binary_search_by(|v| v.total_cmp(&b[0])).ok()?;
-        let mut dist = vec![f32::INFINITY; w * h * 2];
-        let mut prev = vec![usize::MAX; w * h * 2];
-        let mut heap = BinaryHeap::new();
+        dist.clear();
+        prev.clear();
+        dist.resize(w * h * 2, f32::INFINITY);
+        prev.resize(w * h * 2, usize::MAX);
+        heap.clear();
+        checks.clear();
         for dir in 0..2 {
             dist[start * 2 + dir] = 0.;
             heap.push(Visit {
@@ -388,7 +459,6 @@ impl Router {
                 state: start * 2 + dir,
             });
         }
-        let mut checks: HashMap<(usize, usize), Option<f32>> = HashMap::new();
         while let Some(v) = heap.pop() {
             if v.cost > dist[v.state] {
                 continue;
@@ -415,7 +485,8 @@ impl Router {
             .into_iter()
             .filter_map(|(ok, j, d)| ok.then_some((j, d)))
             {
-                let edge = *checks.entry((i.min(j), i.max(j))).or_insert_with(|| {
+                // The lower grid index and axis identify one undirected edge.
+                let edge = *checks.entry(i.min(j) * 2 + dir).or_insert_with(|| {
                     let p = point(i);
                     let q = point(j);
                     if !self.clear(p, q, None) {

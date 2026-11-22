@@ -343,9 +343,10 @@ impl SceneIndex {
                 end: port_anchor(rect(&e.to.0), e.to.1, nodes[&e.to.0].inputs, false),
             })
             .collect();
-        let mut routes = studio_routing::Router::new(obstacles).route_all(&links);
-        links.into_iter().map(move |link| {
-            let route = routes.remove(&link.id).unwrap();
+        let routes = studio_routing::Router::new(obstacles).route_all(&links);
+        // Both streams are ordered by UUID, independent of routing order.
+        links.into_iter().zip(routes).map(|(link, (id, route))| {
+            debug_assert_eq!(link.id, id);
             let bounds = if route.blocked {
                 route_bounds(&[link.start, link.end])
             } else {

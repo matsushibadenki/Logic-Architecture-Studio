@@ -310,3 +310,86 @@ so the system queue entries could not be associated with those drawables.
 CoreVideo and Metal therefore bound the wait to the post-GPU presentation
 interval and count the intervening refresh opportunities. They do not
 identify the exact private WindowServer scheduling decision for a frame.
+
+### Repeated labels in the normal preview path
+
+The text renderer now reuses the shaped line and its ink bounds across
+adjacent labels with identical text, font size and weight. Every label
+still uses its own position, clip, color and draw order.
+
+Four alternating release runs on Apple M4 used the ordinary preview
+scheduler and the same 2,000-node, four-node drag fixture at
+249.75–249.80 Hz. Medians of the per-run percentiles were:
+
+| Metric | Before p50 / p95 | After p50 / p95 |
+| --- | ---: | ---: |
+| Draw preparation | 1.07 / 1.32 ms | 0.60 / 0.81 ms |
+| Input to display | 64.08 / 66.27 ms | 64.87 / 66.92 ms |
+
+All four pairs are included. The improved build showed 114 previews
+across the four runs versus 129 before, with the largest count difference
+in the fourth pair (14 versus 29). The preparation improvement was not
+reflected in end-to-end presentation latency.
+
+### Obstacle clearance during drag preview
+
+Boolean obstacle queries now visit grid buckets directly and stop on
+the first intersection. Queries that enumerate routing candidates still
+use ordered, deduplicated results. The scene consumes routed links and
+routes in UUID order without individual tree removals.
+
+Three matched pairs on Apple M4 used the existing 2,000-node / 3,996-wire
+fixture, four-node path and 249.79–249.80 Hz input. A fourth pair had
+different viewport zoom and was excluded. Medians of per-run percentiles:
+
+| Metric | Before p50 / p95 | After p50 / p95 |
+| --- | ---: | ---: |
+| Preview scene assembly | 8.64 / 9.13 ms | 8.23 / 8.42 ms |
+| Input to display | 58.34 / 65.69 ms | 61.71 / 65.66 ms |
+
+Visible previews totaled 102 before and 96 after. Scene-assembly p95
+improved, and input-to-display p95 was essentially unchanged.
+
+### Wire clearance during the no-crossing pass
+
+The shared Rust router now visits grid buckets directly when a candidate
+segment only needs a yes/no clearance decision. It stops at the first
+conflict. The crossing-enabled pass still deduplicates candidate wires
+before adding penalties.
+
+An Apple Silicon release CPU benchmark alternated the previous and
+updated clearance implementations on 2,000 nodes and 1,950 wires.
+After four warm-up pairs, all 60 measured pairs produced identical
+route points, bridge locations and blocked flags. The median and p95
+routing times (including fixture construction) were 2.26 / 3.80 ms
+before and 1.89 / 2.28 ms after. Window presentation was outside this
+measurement.
+
+### Detour search
+
+The direct route and the first detour pass share one terminal-clearance
+decision. Detour search identifies each undirected grid edge by its lower
+vertex index and axis.
+
+An Apple Silicon release CPU benchmark alternated the two implementations
+for 60 measured pairs after four warm-up pairs per workload. All route
+points, bridges and blocked flags matched. The nonplanar workload used
+24 independent six-node clusters with 216 wires, 72 of which needed
+bridges. Its p50 / p95 went from 101.44 / 139.36 ms to 92.74 / 127.51 ms.
+On a simple 2,000-node / 1,950-wire grid, p50 / p95 went from
+5.10 / 15.26 ms to 5.15 / 16.98 ms. The benefit was specific to detour-heavy
+routing in this run. Window presentation was outside the measurement.
+
+### Detour search allocation reuse
+
+A routing pass now retains the detour coordinate buffers, search distances,
+predecessors, priority queue and edge memo between attempts. Each search
+resets its contents, including when retrying a wider region or permitting
+crossings. Direct routes do not allocate the search buffers.
+
+The same release CPU workloads used 60 alternating measured pairs after
+four warm-up pairs. Route points, bridge coordinates and blocked flags
+matched on every run. Nonplanar workload p50 / p95 improved from
+32.49 / 33.36 ms to 25.92 / 27.56 ms. The 2,000-node grid stayed near
+1.71 / 1.77 ms before and 1.72 / 1.77 ms after. These comparisons measure
+routing only.

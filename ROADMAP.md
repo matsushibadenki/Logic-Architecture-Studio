@@ -107,7 +107,12 @@
 - 🟢 [Done] Compare matched 250 Hz in-app group-drag replay through actual macOS window presentation using Metal drawable timestamps. See docs/PERFORMANCE.md for the measured latency and frame counts.
 - 🟢 [Done] Trace per-preview input wait, CPU assembly, Metal GPU execution interval and display wait. Compare overview wire-warning batching and diagnose drawable backpressure in the shallow-queue trial.
 - 🟢 [Done] Correlate CoreVideo refresh timing with Metal drawable presentation. Compare opt-in single-in-flight preview pacing at 250 Hz on macOS and document its latency and throughput tradeoff.
+- 🟢 [Done] Reuse shaped text and centered glyph ink bounds for adjacent repeated labels in the native canvas. Benchmark the normal preview path at 250 Hz with the 2,000-node fixture.
 - 🟠 [Next] Reduce the window presentation tail under sustained drag input. Track display wait and drawable acquisition together when evaluating scheduling changes.
+- 🟢 [Done] Short-circuit obstacle clearance queries without allocating candidate lists, and assemble routed edges in ID order without repeated map removals. Verified native 2,000-node drag preview and renderer regressions.
+- 🟢 [Done] Short-circuit wire clearance checks during the no-crossing routing pass. Verify identical routes on a 2,000-node grid and preserve single-count crossing penalties in the fallback pass.
+- 🟢 [Done] Reuse terminal clearance between direct routing and detour search, and compact the detour edge-cache key. Verify before/after route equivalence on grid and nonplanar fixtures.
+- 🟢 [Done] Reuse detour search allocations within a routing pass. Verify identical routes and measure the improvement on nonplanar and 2,000-node grid fixtures.
 - ⭕️ [Pending] Measure physical pointing-device and AppKit/Tao input dispatch through presentation.
 - 🟢 [Done] Native left/right/bottom panel strips, same-WebView floating/reparenting, hide/reopen toolbar and OS-close handling.
 - 🟢 [Done] macOS live QA for library, inspector and results: all dock destinations, floating/redocking, panel close/reopen, floating OS-close/reopen.
