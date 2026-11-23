@@ -33,8 +33,10 @@ fn thread_cpu_time_ns() -> u64 {
 }
 
 fn main() {
-    let stress = std::env::args().any(|arg| arg == "--stress");
-    let replay = std::env::args().any(|arg| arg == "--drag-replay");
+    let preview_commit = std::env::args().any(|arg| arg == "--preview-commit");
+    let stress = preview_commit || std::env::args().any(|arg| arg == "--stress");
+    let held = std::env::args().any(|arg| arg == "--hold-preview");
+    let replay = held || std::env::args().any(|arg| arg == "--drag-replay");
     pollster::block_on(async {
         let adapter = wgpu::Instance::default()
             .request_adapter(&Default::default())
@@ -125,7 +127,7 @@ fn main() {
                     let period = Duration::from_micros(4_000);
                     let path: Vec<_> = (0..250)
                         .map(|i| {
-                            let phase = (i % 100) as f32;
+                            let phase = (if held { i / 8 * 8 } else { i } % 100) as f32;
                             let x = 50. - (phase - 50.).abs();
                             let mut preview = unge_interaction::Preview::default();
                             for name in &moved {
@@ -200,6 +202,25 @@ fn main() {
                 let mut last = serde_json::Value::Null;
                 for sample in 0..35 {
                     let offset = if sample % 2 == 0 { 18. } else { -18. };
+                    if preview_commit {
+                        let mut preview = unge_interaction::Preview::default();
+                        for name in &moved {
+                            let id = retained.ids[name];
+                            let mut rect = *retained.document().placement().get(&id).unwrap();
+                            rect.x += offset;
+                            preview.placement.insert(id, rect);
+                        }
+                        retained
+                            .index
+                            .scene_with_labels(
+                                view,
+                                &selected,
+                                &preview,
+                                &retained.labels,
+                                Locale::En,
+                            )
+                            .unwrap();
+                    }
                     for id in &moved {
                         doc.nodes.update(id, |node| node.x += offset).unwrap();
                     }

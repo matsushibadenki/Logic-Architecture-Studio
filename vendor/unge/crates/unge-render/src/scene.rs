@@ -149,6 +149,11 @@ pub struct GeometryStats {
     pub rebuilt_edges: usize,
     pub reused_edges: usize,
 }
+struct PreviewRoutes {
+    placement: BTreeMap<Id, Rect>,
+    routes: Vec<(Id, studio_routing::Route, Rect)>,
+}
+
 /// Retained geometry. Small committed edits update bounded BVH overlays.
 pub struct SceneIndex {
     nodes: BTreeMap<Id, RenderNode>,
@@ -159,6 +164,7 @@ pub struct SceneIndex {
     groups: crate::groups::GroupIndex,
     node_cache: RefCell<HashMap<Id, CachedNode>>,
     edge_cache: RefCell<HashMap<Id, CachedEdge>>,
+    preview_routes: RefCell<Option<PreviewRoutes>>,
 }
 /// Capture before consuming a Command; apply only after that edit commits.
 #[derive(Debug, Default)]
@@ -322,25 +328,30 @@ impl SceneIndex {
         edges: &BTreeMap<Id, RenderEdge>,
         placement: &BTreeMap<Id, Rect>,
     ) -> impl Iterator<Item = (Id, studio_routing::Route, Rect)> + use<> {
-        let rect = |id: &Id| placement.get(id).copied().unwrap_or(nodes[id].rect);
+        let mut endpoints = HashMap::with_capacity(nodes.len());
         let obstacles = nodes
-            .keys()
-            .map(|id| {
-                let r = rect(id);
+            .iter()
+            .map(|(id, node)| {
+                let rect = placement.get(id).copied().unwrap_or(node.rect);
+                endpoints.insert(*id, (rect, node.inputs, node.outputs));
                 studio_routing::Obstacle {
                     id: id.as_u128(),
-                    rect: [r.x, r.y, r.width, r.height],
+                    rect: [rect.x, rect.y, rect.width, rect.height],
                 }
             })
             .collect();
         let links: Vec<_> = edges
             .iter()
-            .map(|(id, e)| studio_routing::Link {
-                id: id.as_u128(),
-                source: (e.from.0.as_u128(), e.from.1),
-                target: (e.to.0.as_u128(), e.to.1),
-                start: port_anchor(rect(&e.from.0), e.from.1, nodes[&e.from.0].outputs, true),
-                end: port_anchor(rect(&e.to.0), e.to.1, nodes[&e.to.0].inputs, false),
+            .map(|(id, edge)| {
+                let (source, _, outputs) = endpoints[&edge.from.0];
+                let (target, inputs, _) = endpoints[&edge.to.0];
+                studio_routing::Link {
+                    id: id.as_u128(),
+                    source: (edge.from.0.as_u128(), edge.from.1),
+                    target: (edge.to.0.as_u128(), edge.to.1),
+                    start: port_anchor(source, edge.from.1, outputs, true),
+                    end: port_anchor(target, edge.to.1, inputs, false),
+                }
             })
             .collect();
         let routes = studio_routing::Router::new(obstacles).route_all(&links);
@@ -356,24 +367,30 @@ impl SceneIndex {
         })
     }
 
-    fn route_edges(
-        nodes: &BTreeMap<Id, RenderNode>,
-        edges: &mut BTreeMap<Id, RenderEdge>,
-        placement: &BTreeMap<Id, Rect>,
+    fn install_routes(
+        &mut self,
+        routes: impl IntoIterator<Item = (Id, studio_routing::Route, Rect)>,
     ) {
-        for (id, route, bounds) in Self::routes(nodes, edges, placement) {
-            let edge = edges.get_mut(&id).unwrap();
-            edge.bounds = bounds;
-            edge.points = route.points;
-            edge.bridges = route.bridges;
-            edge.blocked = route.blocked;
-        }
+        let bounds = routes
+            .into_iter()
+            .map(|(id, route, bounds)| {
+                let edge = self.edges.get_mut(&id).unwrap();
+                edge.bounds = bounds;
+                edge.points = route.points;
+                edge.bridges = route.bridges;
+                edge.blocked = route.blocked;
+                (id, bounds)
+            })
+            .collect();
+        self.edge_index = SpatialIndex::from_rects(bounds);
     }
+
     fn reroute(&mut self) {
-        Self::route_edges(&self.nodes, &mut self.edges, &BTreeMap::new());
-        self.edge_index =
-            SpatialIndex::from_rects(self.edges.iter().map(|(id, e)| (*id, e.bounds)).collect());
+        *self.preview_routes.get_mut() = None;
+        let routes = Self::routes(&self.nodes, &self.edges, &BTreeMap::new());
+        self.install_routes(routes);
     }
+
     pub fn new(doc: &Document) -> Self {
         let nodes = doc
             .graph()
@@ -404,6 +421,7 @@ impl SceneIndex {
             groups: crate::groups::GroupIndex::new(doc),
             node_cache: RefCell::new(HashMap::new()),
             edge_cache: RefCell::new(HashMap::new()),
+            preview_routes: RefCell::new(None),
         };
         index.reroute();
         index
@@ -425,6 +443,11 @@ impl SceneIndex {
                 && rects.keys().all(|id| self.nodes.contains_key(id))
                 && (self.node_index.update_rects(&rects) || self.node_index.refit_rects(&rects))
             {
+                let matching_preview = self
+                    .preview_routes
+                    .get_mut()
+                    .take()
+                    .filter(|preview| preview.placement == rects);
                 for (id, rect) in rects {
                     self.nodes.get_mut(&id).unwrap().rect = rect;
                     self.node_cache.get_mut().remove(&id);
@@ -435,9 +458,13 @@ impl SceneIndex {
                 if changes.groups_changed || !doc.graph().groups().is_empty() {
                     self.groups = crate::groups::GroupIndex::new(doc);
                 }
-                // Routing considers all obstacles, including moves unrelated to an endpoint.
-                // The final edge index is rebuilt once, from the routed bounds.
-                self.reroute();
+                // The position-only commit has the same topology and obstacles
+                // as the preview only when the complete changed placement agrees.
+                if let Some(preview) = matching_preview {
+                    self.install_routes(preview.routes);
+                } else {
+                    self.reroute();
+                }
                 return SceneUpdate::Incremental;
             }
         }
@@ -702,21 +729,29 @@ impl SceneIndex {
         let cable_area = expanded(area, wire_width(viewport.zoom) * 0.5 + 1.0 / viewport.zoom);
         // Preview routing uses the retained topology. A moved obstacle can
         // displace a wire with neither endpoint on it.
-        let preview_routes: Vec<_> = if preview.placement.is_empty() {
-            Vec::new()
-        } else {
-            Self::routes(&self.nodes, &self.edges, &preview.placement)
-                .filter(|(_, _, bounds)| bounds.intersects(cable_area))
-                .collect()
-        };
+        let mut preview_routes = self.preview_routes.borrow_mut();
         let committed_edges = if preview.placement.is_empty() {
+            *preview_routes = None;
             self.edge_index.query(cable_area)
         } else {
+            let cached = preview_routes.get_or_insert_with(|| PreviewRoutes {
+                placement: BTreeMap::new(),
+                routes: Vec::new(),
+            });
+            if cached.placement != preview.placement {
+                cached.placement.clone_from(&preview.placement);
+                cached.routes.clear();
+                cached
+                    .routes
+                    .extend(Self::routes(&self.nodes, &self.edges, &preview.placement));
+            }
             Vec::new()
         };
         let edges = committed_edges.into_iter().map(|id| (id, None)).chain(
             preview_routes
                 .iter()
+                .flat_map(|cached| &cached.routes)
+                .filter(|(_, _, bounds)| bounds.intersects(cable_area))
                 .map(|(id, route, _)| (*id, Some(route))),
         );
         timings.edge_query_ms = elapsed_ms(start);

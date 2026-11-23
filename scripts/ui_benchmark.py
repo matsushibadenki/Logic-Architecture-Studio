@@ -91,6 +91,17 @@ def summarize_native_drag(paths):
             input_to_display_ms=stats([
                 (frame["presented_at"] - times[frame["input"]]) * 1000 for frame in shown]),
         )
+        if trace.get("release") is not None:
+            release = trace["release"]
+            displayed = trace.get("release_display_at")
+            if displayed is None or not release["released_at"] <= release["saved_at"] <= displayed:
+                raise SystemExit(f"No valid committed frame timing: {path}")
+            result["release"] = dict(
+                revision=release["revision"],
+                save_confirmation_ms=(release["saved_at"] - release["released_at"]) * 1000,
+                display_ms=(displayed - release["released_at"]) * 1000,
+                save_to_display_ms=(displayed - release["saved_at"]) * 1000,
+            )
         if "stages" in trace:
             marks = {(mark["input"], mark["stage"]): mark for mark in trace["stages"]}
             breakdown = []

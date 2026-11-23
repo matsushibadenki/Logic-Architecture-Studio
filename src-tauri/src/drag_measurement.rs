@@ -7,7 +7,7 @@ use objc2_metal::MTLDrawable;
 use objc2_quartz_core::{CACurrentMediaTime, CAMetalDrawable, CAMetalLayer};
 use serde::Serialize;
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     path::PathBuf,
     ptr::NonNull,
     sync::{
@@ -88,6 +88,34 @@ pub fn cpu_sample(assembly_ms: f64, surface: &studio_renderer::CpuSurfaceFrameTi
 
 thread_local! {
     static FRAME: RefCell<Option<Frame>> = const { RefCell::new(None) };
+}
+
+thread_local! {
+    static COMMIT_REPLAY_ACTIVE: Cell<bool> = const { Cell::new(false) };
+    static RELEASE_FRAME: RefCell<Option<(u64, Frame)>> = const { RefCell::new(None) };
+}
+
+pub fn committing_replay() -> bool {
+    COMMIT_REPLAY_ACTIVE.with(Cell::get)
+}
+
+pub fn begin_release_frame(revision: u64) -> bool {
+    RELEASE_FRAME.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if !slot
+            .as_ref()
+            .is_some_and(|(expected, _)| *expected == revision)
+        {
+            return false;
+        }
+        let (_, frame) = slot.take().unwrap();
+        FRAME.with(|current| current.replace(Some(frame)));
+        true
+    })
+}
+
+pub fn end_release_frame() {
+    FRAME.with(|slot| slot.take());
 }
 
 define_class!(
@@ -263,6 +291,17 @@ fn deliver(
 pub fn start(app: tauri::AppHandle, path: PathBuf) {
     std::thread::spawn(move || {
         let result = replay(&app);
+        if result.is_err() {
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                if COMMIT_REPLAY_ACTIVE.with(|active| active.replace(false)) {
+                    let shared = handle.state::<native::Shared>();
+                    let mut native = shared.lock().unwrap();
+                    native.view.interaction = Default::default();
+                    native.dirty = true;
+                }
+            });
+        }
         let report = result.unwrap_or_else(|error| serde_json::json!({"error": error}));
         if let Err(error) = std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap()) {
             eprintln!("Native drag trace: {error}");
@@ -332,6 +371,85 @@ impl Drop for DisplayClock {
     }
 }
 
+#[derive(Serialize)]
+struct Release {
+    revision: u64,
+    released_at: f64,
+    saved_at: f64,
+}
+
+fn commit_release(
+    app: &tauri::AppHandle,
+    last: Input,
+    anchor: [f32; 2],
+    zoom: f32,
+    presented: mpsc::Sender<Sample>,
+) -> Result<Release, String> {
+    // Draw the exact final placement before issuing the same Up and commit
+    // used by live native input. This also handles coalesced final motions.
+    let final_preview = Input {
+        index: COUNT + 1,
+        ..last
+    };
+    deliver(app, final_preview, anchor, zoom, presented.clone(), None)?;
+    let snapshot = app
+        .state::<sync::Cache>()
+        .0
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("workspace has not synchronized")?;
+    let released_at = CACurrentMediaTime();
+    let revision = snapshot.meta["revision"]
+        .as_u64()
+        .ok_or("missing workspace revision")?;
+    let shared = app.state::<native::Shared>();
+    let mut native = shared.lock().unwrap();
+    let operations = native.view.pointer(
+        &snapshot.document,
+        revision,
+        PointerEvent::Up {
+            pointer: 0,
+            position: [
+                anchor[0] + last.offset[0] * zoom,
+                anchor[1] + last.offset[1] * zoom,
+            ],
+        },
+    )?;
+    if operations.len() != MOVED.len() {
+        return Err("release did not commit exactly four nodes".into());
+    }
+    let next = native::commit_gesture(
+        app,
+        &mut native,
+        &snapshot.cursor,
+        revision,
+        operations,
+        None,
+    )?;
+    let saved_at = CACurrentMediaTime();
+    RELEASE_FRAME.with(|slot| {
+        slot.replace(Some((
+            next,
+            Frame {
+                input: Input {
+                    index: COUNT,
+                    offset: last.offset,
+                    input_at: released_at,
+                },
+                delivered_at: saved_at,
+                presented,
+                in_flight: None,
+            },
+        )))
+    });
+    Ok(Release {
+        revision: next,
+        released_at,
+        saved_at,
+    })
+}
+
 fn replay(app: &tauri::AppHandle) -> Result<serde_json::Value, String> {
     // Allow the initial workspace snapshot, viewport and dock layout to settle.
     std::thread::sleep(Duration::from_secs(3));
@@ -349,16 +467,33 @@ fn replay(app: &tauri::AppHandle) -> Result<serde_json::Value, String> {
         .recv_timeout(Duration::from_secs(10))
         .map_err(|error| error.to_string())??;
     std::thread::sleep(Duration::from_millis(250));
-    let (started, ready) = mpsc::channel();
-    let handle = app.clone();
-    app.run_on_main_thread(move || {
-        native::redraw(&handle);
-        let _ = started.send(begin(&handle));
-    })
-    .map_err(|error| error.to_string())?;
-    let (anchor, zoom) = ready
-        .recv_timeout(Duration::from_secs(10))
-        .map_err(|error| error.to_string())??;
+    let committing = std::env::var_os("LAS_NATIVE_DRAG_COMMIT").is_some();
+    let boot_deadline = Instant::now() + Duration::from_secs(8);
+    let (anchor, zoom) = loop {
+        let (started, ready) = mpsc::channel();
+        let handle = app.clone();
+        app.run_on_main_thread(move || {
+            native::redraw(&handle);
+            let result = begin(&handle);
+            if result.is_ok() && committing {
+                COMMIT_REPLAY_ACTIVE.with(|active| active.set(true));
+            }
+            let _ = started.send(result);
+        })
+        .map_err(|error| error.to_string())?;
+        match ready
+            .recv_timeout(Duration::from_secs(10))
+            .map_err(|error| error.to_string())?
+        {
+            Err(error) if error == "workspace has not synchronized" => {
+                if boot_deadline <= Instant::now() {
+                    return Err(error);
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            result => break result?,
+        }
+    };
     let window = app
         .get_window("workspace")
         .ok_or("missing workspace window")?;
@@ -429,18 +564,28 @@ fn replay(app: &tauri::AppHandle) -> Result<serde_json::Value, String> {
     }
     let (finished, done) = mpsc::channel();
     let handle = app.clone();
+    let last = *inputs.last().unwrap();
     app.run_on_main_thread(move || {
-        let shared = handle.state::<native::Shared>();
-        let mut native = shared.lock().unwrap();
-        native.view.interaction = Default::default();
-        native.dirty = true;
-        drop(native);
-        native::redraw(&handle);
-        let _ = finished.send(());
+        if committing {
+            let result = commit_release(&handle, last, anchor, zoom, presented).map(Some);
+            if result.is_ok() {
+                COMMIT_REPLAY_ACTIVE.with(|active| active.set(false));
+            }
+            let _ = finished.send(result);
+        } else {
+            let shared = handle.state::<native::Shared>();
+            let mut native = shared.lock().unwrap();
+            native.view.interaction = Default::default();
+            native.dirty = true;
+            drop(native);
+            native::redraw(&handle);
+            let _ = finished.send(Ok(None));
+        }
     })
     .map_err(|error| error.to_string())?;
-    done.recv_timeout(Duration::from_secs(10))
-        .map_err(|error| error.to_string())?;
+    let release = done
+        .recv_timeout(Duration::from_secs(10))
+        .map_err(|error| error.to_string())??;
     std::thread::sleep(Duration::from_millis(350));
     let (mut frames, mut stages) = (Vec::new(), Vec::new());
     for sample in frames_receiver.try_iter() {
@@ -449,6 +594,15 @@ fn replay(app: &tauri::AppHandle) -> Result<serde_json::Value, String> {
             sample => stages.push(sample),
         }
     }
+    let release_display = frames
+        .iter()
+        .find(|frame| frame.input == COUNT && frame.presented_at > 0.)
+        .map(|frame| frame.presented_at);
+    frames.retain(|frame| frame.input < COUNT);
+    stages.retain(|sample| match sample {
+        Sample::Cpu { input, .. } | Sample::Gpu { input, .. } => *input < COUNT,
+        Sample::Presented(_) => false,
+    });
     let failures: Vec<_> = failures.try_iter().collect();
     drop(clock);
     let refresh: Vec<_> = refresh_log.try_iter().collect();
@@ -461,6 +615,7 @@ fn replay(app: &tauri::AppHandle) -> Result<serde_json::Value, String> {
         serde_json::json!({"nodes": 2000, "moved": MOVED, "target_hz": 250,
         "canvas_window_px": [width, height], "zoom":zoom, "inputs": inputs, "frames": frames, "stages": stages, "errors": failures,
         "refresh": refresh, "display": display, "present_paced": paced,
+        "release": release, "release_display_at": release_display,
         "frame_latency": if std::env::var_os("LAS_NATIVE_DRAG_SHALLOW_QUEUE").is_some() { 1 } else { 2 }}),
     )
 }

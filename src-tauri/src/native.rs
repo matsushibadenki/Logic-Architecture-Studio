@@ -291,6 +291,9 @@ pub fn redraw(app: &tauri::AppHandle) {
     n.view.viewport.size = [size.width as f32, size.height as f32];
     let Native { renderer, view, .. } = &mut *n;
     #[cfg(target_os = "macos")]
+    let release_frame =
+        super::drag_measurement::begin_release_frame(s["revision"].as_u64().unwrap_or(0));
+    #[cfg(target_os = "macos")]
     let observe = super::drag_measurement::gpu_observer();
     #[cfg(not(target_os = "macos"))]
     let observe = None;
@@ -306,6 +309,10 @@ pub fn redraw(app: &tauri::AppHandle) {
     if let Ok(Some((assembly_ms, surface))) = &result {
         super::drag_measurement::cpu_sample(*assembly_ms, surface);
     }
+    #[cfg(target_os = "macos")]
+    if release_frame {
+        super::drag_measurement::end_release_frame();
+    }
     if result.is_ok() {
         super::measurement::native(app, s["revision"].as_u64().unwrap_or(0));
     }
@@ -314,6 +321,47 @@ pub fn redraw(app: &tauri::AppHandle) {
         eprintln!("Native render: {e}");
     }
 }
+pub(crate) fn commit_gesture(
+    app: &tauri::AppHandle,
+    native: &mut Native,
+    cursor: &str,
+    revision: u64,
+    operations: Vec<design_core::Operation>,
+    trace: Option<(std::time::Instant, usize)>,
+) -> Result<u64, String> {
+    let request = studio_service::Request {
+        method: "view.command".into(),
+        args: json!({"method":"design.apply_patch","args":{"expected_revision":revision,"label":"Native gesture","operations":operations}}),
+        actor: "native".into(),
+    };
+    let result = match studio_service::call(&app.state::<super::CoreRoot>().0, &request) {
+        Ok(result) => result,
+        Err(error) => {
+            let _ = app.emit("design-changed", ());
+            return Err(error.to_string());
+        }
+    };
+    let next = result["revision"]
+        .as_u64()
+        .ok_or("missing gesture revision")?;
+    if next > revision {
+        native.pending_revision = Some((
+            cursor
+                .rsplit_once(':')
+                .map(|(epoch, _)| epoch)
+                .unwrap_or("")
+                .into(),
+            next,
+        ));
+    }
+    if let Some((started, nodes)) = trace {
+        super::measurement::commit(app, next, started, nodes);
+    }
+    super::sync::wake(app);
+    let _ = app.emit("design-changed", ());
+    Ok(next)
+}
+
 pub struct Bridge(pub tauri::AppHandle);
 pub struct Input {
     app: tauri::AppHandle,
@@ -488,6 +536,11 @@ impl Plugin<EventLoopMessage> for Input {
                 }
             }
             WindowEvent::Focused(false) => {
+                #[cfg(target_os = "macos")]
+                if super::drag_measurement::committing_replay() {
+                    // Synthetic input remains owned by the replay until release.
+                    return false;
+                }
                 n.position = None;
                 n.primary_press = None;
                 n.last_module_click = None;
@@ -570,49 +623,17 @@ impl Plugin<EventLoopMessage> for Input {
                                 let _ = self.app.emit("design-changed", ());
                             }
                         }
-                        let request = if ops.is_empty() {
-                            None
-                        } else {
-                            Some(studio_service::Request {
-                                method: "design.apply_patch".into(),
-                                args: json!({"expected_revision":rev,"label":"Native gesture","operations":ops}),
-                                actor: "native".into(),
-                            })
-                        };
-                        if let Some(request) = request {
-                            let request = studio_service::Request {
-                                method: "view.command".into(),
-                                args: json!({"method":request.method,"args":request.args}),
-                                actor: request.actor,
-                            };
-                            match studio_service::call(&root.0, &request) {
-                                Ok(result) => {
-                                    if let Some(revision) =
-                                        result["revision"].as_u64().filter(|r| *r > rev)
-                                    {
-                                        n.pending_revision = Some((
-                                            snapshot
-                                                .cursor
-                                                .rsplit_once(':')
-                                                .map(|(e, _)| e)
-                                                .unwrap_or("")
-                                                .into(),
-                                            revision,
-                                        ));
-                                    }
-                                    if moving {
-                                        super::measurement::commit(
-                                            &self.app,
-                                            result["revision"].as_u64().unwrap_or(rev + 1),
-                                            started,
-                                            doc.nodes.len(),
-                                        );
-                                    }
-                                    super::sync::wake(&self.app);
-                                }
-                                Err(e) => eprintln!("{e}"),
+                        if !ops.is_empty() {
+                            if let Err(error) = commit_gesture(
+                                &self.app,
+                                &mut n,
+                                &snapshot.cursor,
+                                rev,
+                                ops,
+                                moving.then_some((started, doc.nodes.len())),
+                            ) {
+                                eprintln!("{error}");
                             }
-                            let _ = self.app.emit("design-changed", ());
                         }
                     }
                     Err(e) => {

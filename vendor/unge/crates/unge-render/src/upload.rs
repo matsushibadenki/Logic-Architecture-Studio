@@ -5,19 +5,35 @@ use std::ops::Range;
 pub fn changed_ranges(old: &[u8], new: &[u8], stride: usize) -> Vec<Range<usize>> {
     assert!(stride > 0 && new.len().is_multiple_of(stride));
     let mut ranges: Vec<Range<usize>> = Vec::new();
-    for (i, value) in new.chunks_exact(stride).enumerate() {
-        let start = i * stride;
-        if old.get(start..start + stride) == Some(value) {
+    // Retained frames often have long runs of unchanged instances.
+    // Compare those runs in bulk before looking at individual instances.
+    let block_size = stride.saturating_mul(32);
+    let merge_gap = stride.saturating_mul(4);
+    for (block_index, block) in new.chunks(block_size).enumerate() {
+        let base = block_index * block_size;
+        if old.get(base..base + block.len()) == Some(block) {
             continue;
         }
-        if let Some(last) = ranges.last_mut().filter(|r| start <= r.end + stride * 4) {
-            last.end = start + stride;
-        } else {
-            ranges.push(start..start + stride);
+        for (index, value) in block.chunks_exact(stride).enumerate() {
+            let start = base + index * stride;
+            let end = start + stride;
+            if old.get(start..end) == Some(value) {
+                continue;
+            }
+            if let Some(last) = ranges
+                .last_mut()
+                .filter(|range| start <= range.end.saturating_add(merge_gap))
+            {
+                last.end = end;
+            } else {
+                if ranges.len() == 64 {
+                    // Later edits can only extend the last range or append a
+                    // new one, so there is no need to scan the rest.
+                    return std::iter::once(0..new.len()).collect();
+                }
+                ranges.push(start..end);
+            }
         }
-    }
-    if ranges.len() > 64 {
-        return std::iter::once(0..new.len()).collect();
     }
     ranges
 }
@@ -48,5 +64,22 @@ mod tests {
             assert_eq!(gpu, next);
         }
         assert!(changed_ranges(&old, &old, 4).is_empty());
+    }
+
+    #[test]
+    fn coalesces_across_blocks_and_stops_only_after_the_write_limit() {
+        let old = vec![0u8; 512 * 4];
+        let mut next = old.clone();
+        next[31 * 4] = 1;
+        next[36 * 4] = 1;
+        assert_eq!(changed_ranges(&old, &next, 4), vec![31 * 4..37 * 4]);
+
+        next.fill(0);
+        for index in 0..64 {
+            next[index * 6 * 4] = 1;
+        }
+        assert_eq!(changed_ranges(&old, &next, 4).len(), 64);
+        next[64 * 6 * 4] = 1;
+        assert_eq!(changed_ranges(&old, &next, 4), vec![0..next.len()]);
     }
 }

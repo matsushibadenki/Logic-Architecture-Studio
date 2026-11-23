@@ -182,14 +182,30 @@ fn simplify(points: Vec<Point>) -> Vec<Point> {
     }
     out
 }
+#[derive(Clone, Copy)]
+enum EdgeCheck {
+    Unchecked,
+    Checked(Option<f32>),
+}
+
 #[derive(Default)]
-struct SearchScratch {
+struct SearchGrid {
     xs: Vec<f32>,
     ys: Vec<f32>,
+}
+
+#[derive(Default)]
+struct DetourScratch {
+    grids: [SearchGrid; 3],
+    search: SearchScratch,
+}
+
+#[derive(Default)]
+struct SearchScratch {
     dist: Vec<f32>,
     prev: Vec<usize>,
     heap: BinaryHeap<Visit>,
-    checks: HashMap<usize, Option<f32>>,
+    checks: Vec<EdgeCheck>,
 }
 
 impl Router {
@@ -286,7 +302,7 @@ impl Router {
                 .then(a.id.cmp(&b.id))
         });
         let mut last_source = None;
-        let mut scratch = SearchScratch::default();
+        let mut scratch = DetourScratch::default();
         links
             .into_iter()
             .map(|link| {
@@ -311,7 +327,7 @@ impl Router {
         l: Link,
         a: Point,
         source_clear: bool,
-        scratch: &mut SearchScratch,
+        scratch: &mut DetourScratch,
     ) -> Route {
         let b = [l.end[0] - LEAD, l.end[1]];
         if !source_clear || !self.clear(b, l.end, Some(l.target.0)) {
@@ -330,6 +346,9 @@ impl Router {
         let clear_without_crossings = leads_clear(false);
         let mut result = (clear_without_crossings && self.path_clear(&direct, l.source, false))
             .then(|| direct.to_vec());
+        // Grid coordinates depend on obstacles and reserved wires, which are
+        // unchanged until this link is routed. Share them across both passes.
+        let mut grids_built = 0;
         for crossings in [false, true] {
             if result.is_some() {
                 break;
@@ -341,15 +360,16 @@ impl Router {
             }) {
                 continue;
             }
-            for margin in [96., 384., 1536.] {
-                if let Some(p) = self.search(
-                    a,
-                    b,
-                    l.source,
-                    grow(bounds(a, b), margin),
-                    crossings,
-                    scratch,
-                ) {
+            for (index, (margin, grid)) in [96., 384., 1536.]
+                .into_iter()
+                .zip(&mut scratch.grids)
+                .enumerate()
+            {
+                if index == grids_built {
+                    grids_built += 1;
+                    self.build_search_grid(a, b, l.source, grow(bounds(a, b), margin), grid);
+                }
+                if let Some(p) = self.search(a, b, l.source, grid, crossings, &mut scratch.search) {
                     result = Some(p);
                     break;
                 }
@@ -392,23 +412,15 @@ impl Router {
             blocked: false,
         }
     }
-    fn search(
+    fn build_search_grid(
         &self,
         a: Point,
         b: Point,
         net: (u128, usize),
         region: Bounds,
-        crossings: bool,
-        scratch: &mut SearchScratch,
-    ) -> Option<Vec<Point>> {
-        let SearchScratch {
-            xs,
-            ys,
-            dist,
-            prev,
-            heap,
-            checks,
-        } = scratch;
+        grid: &mut SearchGrid,
+    ) {
+        let SearchGrid { xs, ys } = grid;
         xs.clear();
         ys.clear();
         xs.extend([a[0], b[0], region[0], region[0] + region[2]]);
@@ -435,6 +447,24 @@ impl Router {
         };
         clean(xs, region[0], region[0] + region[2]);
         clean(ys, region[1], region[1] + region[3]);
+    }
+
+    fn search(
+        &self,
+        a: Point,
+        b: Point,
+        net: (u128, usize),
+        grid: &SearchGrid,
+        crossings: bool,
+        scratch: &mut SearchScratch,
+    ) -> Option<Vec<Point>> {
+        let SearchGrid { xs, ys } = grid;
+        let SearchScratch {
+            dist,
+            prev,
+            heap,
+            checks,
+        } = scratch;
         let w = xs.len();
         let h = ys.len();
         if w * h > MAX_GRID {
@@ -451,6 +481,7 @@ impl Router {
         prev.resize(w * h * 2, usize::MAX);
         heap.clear();
         checks.clear();
+        checks.resize(w * h * 2, EdgeCheck::Unchecked);
         for dir in 0..2 {
             dist[start * 2 + dir] = 0.;
             heap.push(Visit {
@@ -486,16 +517,22 @@ impl Router {
             .filter_map(|(ok, j, d)| ok.then_some((j, d)))
             {
                 // The lower grid index and axis identify one undirected edge.
-                let edge = *checks.entry(i.min(j) * 2 + dir).or_insert_with(|| {
-                    let p = point(i);
-                    let q = point(j);
-                    if !self.clear(p, q, None) {
-                        None
-                    } else {
-                        self.wire_cost(p, q, net, crossings)
-                            .map(|c| c + distance(p, q))
+                let slot = &mut checks[i.min(j) * 2 + dir];
+                let edge = match *slot {
+                    EdgeCheck::Checked(cost) => cost,
+                    EdgeCheck::Unchecked => {
+                        let p = point(i);
+                        let q = point(j);
+                        let cost = if self.clear(p, q, None) {
+                            self.wire_cost(p, q, net, crossings)
+                                .map(|c| c + distance(p, q))
+                        } else {
+                            None
+                        };
+                        *slot = EdgeCheck::Checked(cost);
+                        cost
                     }
-                });
+                };
                 if let Some(c) = edge {
                     let cost = v.cost + c + if dir != v.state % 2 { 24. } else { 0. };
                     let state = j * 2 + dir;

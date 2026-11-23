@@ -393,3 +393,143 @@ matched on every run. Nonplanar workload p50 / p95 improved from
 32.49 / 33.36 ms to 25.92 / 27.56 ms. The 2,000-node grid stayed near
 1.71 / 1.77 ms before and 1.72 / 1.77 ms after. These comparisons measure
 routing only.
+
+### Grid-indexed detour edge checks
+
+Detour search now stores clearance and cost in a reusable array indexed by
+the lower grid vertex and axis. The existing 40,000-vertex search limit
+bounds the array. Each attempt resets the entries before use.
+
+On Apple Silicon, 60 alternating CPU benchmark pairs on the 216-wire
+nonplanar fixture produced identical route points, bridges and blocked
+flags. Routing p50 / p95 improved from 25.56 / 26.59 ms to 21.01 / 21.58 ms.
+A separate 30-sample Metal stress run verified retained/full-rebuild
+equivalence with four moving nodes in a 2,000-node circuit. Overview
+delta synchronization p50 was 3.34 ms before and 3.04 ms after.
+This test uses an offscreen target and does not measure window presentation.
+
+### Reuse detour grids across crossing policies
+
+The crossing-free and crossing-enabled attempts now share the coordinate
+grid for each search margin of a single wire. The router builds each grid
+only when needed. Each attempt still resets search costs, predecessors and
+edge checks, and each new wire builds against the latest reservations.
+
+Two release CPU trials each alternated 60 measured before/after pairs on
+the 216-wire nonplanar fixture. Every route, bridge coordinate and blocked
+flag matched. Routing p50 / p95 was 23.90 / 33.77 ms before and
+23.88 / 30.41 ms after in the first trial, and 25.41 / 41.67 ms before
+and 24.99 / 34.25 ms after in the second. These measurements cover the
+router only.
+
+### GPU upload range detection
+
+Range detection compares blocks of 32 instances first, then inspects
+individual instances only in changed blocks. It ends at the 65th range,
+when it would select a full upload anyway. The merge and upload decisions
+remain identical to the previous algorithm.
+
+A release CPU microbenchmark on Apple Silicon used 10,000 instances of
+48 bytes. It alternated implementations over 60 measured batches of
+80 calls for each pattern. The p95 per call was 16.37 to 9.98 µs for
+unchanged data, 16.21 to 11.78 µs for sparse edits, 17.79 to 1.16 µs for
+fragmented edits, and 16.63 to 18.43 µs when nearly every instance changed.
+Both implementations produced identical upload ranges in all four patterns.
+Metal tests verified identical pixels for delta and full uploads after edits
+and buffer reallocation. Window presentation was outside this benchmark.
+
+### Routing endpoint preparation
+
+Scene routing collects node rectangles and port counts once while building
+obstacles, then uses a single lookup per wire endpoint. The same preview
+placement supplies both obstacle bounds and port anchors.
+
+Six alternating release Metal offscreen runs per build used the 2,000-node,
+four-node 250 Hz drag replay. Medians of the run p50 / p95 were:
+
+| Stage | Before | After |
+| --- | ---: | ---: |
+| Preview routing and visible-edge query | 2.33 / 2.59 ms | 1.88 / 3.44 ms |
+| CPU scene assembly | 4.58 / 5.16 ms | 4.20 / 6.32 ms |
+| Scheduled input to GPU completion | 15.08 / 17.07 ms | 14.67 / 19.43 ms |
+
+Typical processing improved and the observed tails increased. The replay
+uses an offscreen target. Window presentation remains a separate target.
+
+### Repeated drag preview placement
+
+The scene retains only the latest preview's routes. An unchanged
+placement reuses the routing result, with visibility evaluated for the
+current viewport. Geometry updates and the first non-preview frame
+invalidate the cache. A regression test compares the reused preview and
+the preview after a committed endpoint move against fresh rendering.
+
+Three alternating Apple Silicon Metal offscreen pairs per workload used
+the same 2,000-node circuit and four-node selection. The new
+`--hold-preview` option uses the same path sampled in groups of eight
+consecutive 250 Hz inputs per placement. `--drag-replay` changes placement
+on each input.
+
+| Workload and stage | Before p50 / p95 | After p50 / p95 |
+| --- | ---: | ---: |
+| Held placement scene assembly | 3.87 / 4.73 ms | 2.28 / 4.70 ms |
+| Held placement input to GPU completion | 13.86 / 16.48 ms | 13.25 / 16.26 ms |
+| Continuous movement scene assembly | 3.91 / 4.41 ms | 3.84 / 4.50 ms |
+| Continuous movement input to GPU completion | 14.44 / 16.63 ms | 14.87 / 16.86 ms |
+
+These are medians of run percentiles. Window presentation was outside the
+measurement.
+
+### Reusing preview routes when a move commits
+
+A position-only commit now installs the latest preview routes and rebuilds
+the edge spatial index when the preview's changed rectangles exactly match
+the committed changes. Any mismatch uses the normal routing path.
+
+The `--preview-commit` Metal offscreen benchmark renders each four-node
+preview before applying its corresponding move in the 2,000-node stress
+fixture. Three alternating trials per build each measured 30 samples per
+view after warm-up. Every committed scene matched its fresh reconstruction.
+The medians of run p50 / p95 for delta synchronization were
+3.18 / 4.54 ms before and 0.63 / 1.39 ms after in overview, and
+2.92 / 5.92 ms before and 0.59 / 1.10 ms after in detail. This measures
+retained-renderer synchronization and excludes persistence and presentation.
+
+### macOS release-to-save and release-to-display timing
+
+Use the same native replay fixture and set `LAS_NATIVE_DRAG_COMMIT=1`
+along with `LAS_NATIVE_DRAG_TRACE` and the explicit QA workspace. This
+mode **persists the move**. Use a newly seeded workspace for each run.
+It renders the final preview, then sends the same Rust pointer-up and
+workspace commit used by the native editor. The release timestamp marks
+entry to that pointer-up path. Save confirmation follows the service
+response, which includes the synchronized move journal write. The
+display timestamp is Metal's `presentedTime` for the canonical revision
+on the workspace canvas. `summarize-native-drag` reports both intervals
+as well as save-to-display time. This replay feeds the Rust editor
+directly; hardware and AppKit input delivery are outside the measurement.
+
+The before/after macOS release builds used the same instrumentation and
+differed only in whether a matching preview route could be reused on commit.
+Each attempt started from a fresh 2,000-node / 3,996-wire workspace with
+n0, n512, n1024 and n1536 selected. The replay sent the same 250 positions.
+All accepted traces had the same viewport and saved positions. Persisted
+moves were checked in the checksummed journal or in the resulting checkpoint.
+
+The final comparison alternated launch order for 12 pairs on Apple M4.
+Eleven pairs met the 249–251 Hz cadence criterion. One pair was excluded
+because the improved build averaged 239.30 Hz. An earlier pilot series
+was used to diagnose cancelled gestures and incomplete startup snapshots
+and is outside the final comparison.
+
+| Interval | Before p50 / p95 | After p50 / p95 |
+| --- | ---: | ---: |
+| Pointer-up to save confirmation | 10.48 / 21.63 ms | 10.93 / 76.62 ms |
+| Pointer-up to canonical frame displayed | 62.21 / 83.84 ms | 62.84 / 241.54 ms |
+| Save confirmation to canonical frame displayed | 55.73 / 69.12 ms | 54.88 / 164.92 ms |
+
+With 11 observations per build, nearest-rank p95 is the maximum. In the
+slowest after run, 76.62 ms elapsed before save confirmation and 164.92 ms
+after it. The offscreen synchronization improvement did not translate to
+a demonstrated save or presentation latency improvement in this small
+window-level comparison.

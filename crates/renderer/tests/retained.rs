@@ -645,6 +645,19 @@ fn moving_unconnected_obstacle_reroutes_wire_during_preview_and_commit() {
     compare(&cache, &doc);
     cache.sync(&original).unwrap();
     equal(&before, &draw(&cache, &Default::default()));
+
+    let cached_preview = draw(&cache, &preview);
+    equal(&cached_preview, &draw(&cache, &preview));
+    let mut changed = original;
+    changed.nodes.update("g_xor", |n| n.x += 60.).unwrap();
+    cache.sync(&changed).unwrap();
+    let fresh = RetainedProjection::new(&changed).unwrap();
+    let updated_preview = draw(&cache, &preview);
+    equal(&updated_preview, &draw(&fresh, &preview));
+    assert_ne!(
+        bytemuck::cast_slice::<_, u8>(&cached_preview.quads),
+        bytemuck::cast_slice::<_, u8>(&updated_preview.quads)
+    );
 }
 
 #[test]
