@@ -480,7 +480,8 @@ pub async fn authenticate(
     if let Some(response) = check_rate(&security, Some(principal), &credential.rate) {
         return response;
     }
-    if (request.uri().path() != "/mcp") != principal.approver() {
+    let mcp_transport = matches!(request.uri().path(), "/mcp" | "/mcp/portable");
+    if mcp_transport == principal.approver() {
         let _ = security.record(
             Some(principal),
             "http",

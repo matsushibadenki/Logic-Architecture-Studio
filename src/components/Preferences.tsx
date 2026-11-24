@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Palette,
+  BrainCircuit,
   Plug,
   Settings,
   RotateCcw,
@@ -18,11 +19,12 @@ import {
   symbolFontSize,
 } from "../appearance";
 import { Hint, IconButton } from "./ui";
+import ModelPreferences from "./ModelPreferences";
 import McpPreferences from "./McpPreferences";
 
 export default function Preferences() {
   const { snapshot, busy, error } = useStudio();
-  const [tab, setTab] = useState<"appearance" | "mcp">("appearance");
+  const [tab, setTab] = useState<"appearance" | "mcp" | "models">("appearance");
   // Form drafts only; applied preferences live in the shared Rust service.
   const [themeEdit, setThemeEdit] = useState<"dark" | "light" | null>(null);
   const [frameEdit, setFrameEdit] = useState<boolean | null>(null);
@@ -147,12 +149,25 @@ export default function Preferences() {
             <Plug size={18} />
             MCP
           </button>
+          <button
+            role="tab"
+            id="models-tab"
+            aria-selected={tab === "models"}
+            aria-controls="models-panel"
+            className="preferences-tab"
+            onClick={() => setTab("models")}
+          >
+            <BrainCircuit size={18} />
+            {t("modelTitle")}
+          </button>
         </nav>
         <div className="preferences-workspace" title={snapshot.document.name}>
           {snapshot.document.name}
         </div>
       </aside>
-      {tab === "mcp" ? (
+      {tab === "models" ? (
+        <ModelPreferences t={t} revision={snapshot.revision} />
+      ) : tab === "mcp" ? (
         <McpPreferences documentName={snapshot.document.name} t={t} />
       ) : (
         <form

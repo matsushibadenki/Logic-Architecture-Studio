@@ -321,6 +321,17 @@ pub fn redraw(app: &tauri::AppHandle) {
         eprintln!("Native render: {e}");
     }
 }
+pub(crate) struct GestureCommit {
+    pub revision: u64,
+    pub acknowledged_at: std::time::Instant,
+    pub applied_at: Option<std::time::Instant>,
+    pub notify_after_draw: bool,
+}
+
+pub(crate) fn notify_commit(app: &tauri::AppHandle) {
+    let _ = app.emit("design-changed", ());
+}
+
 pub(crate) fn commit_gesture(
     app: &tauri::AppHandle,
     native: &mut Native,
@@ -328,12 +339,17 @@ pub(crate) fn commit_gesture(
     revision: u64,
     operations: Vec<design_core::Operation>,
     trace: Option<(std::time::Instant, usize)>,
-) -> Result<u64, String> {
-    let request = studio_service::Request {
+) -> Result<GestureCommit, String> {
+    let mut request = studio_service::Request {
         method: "view.command".into(),
         args: json!({"method":"design.apply_patch","args":{"expected_revision":revision,"label":"Native gesture","operations":operations}}),
         actor: "native".into(),
     };
+    if !(std::env::var_os("LAS_NATIVE_DRAG_TRACE").is_some()
+        && std::env::var_os("LAS_NATIVE_SYNC_BASELINE").is_some())
+    {
+        request.args["native_cursor"] = json!(cursor);
+    }
     let result = match studio_service::call(&app.state::<super::CoreRoot>().0, &request) {
         Ok(result) => result,
         Err(error) => {
@@ -341,6 +357,7 @@ pub(crate) fn commit_gesture(
             return Err(error.to_string());
         }
     };
+    let acknowledged_at = std::time::Instant::now();
     let next = result["revision"]
         .as_u64()
         .ok_or("missing gesture revision")?;
@@ -357,15 +374,66 @@ pub(crate) fn commit_gesture(
     if let Some((started, nodes)) = trace {
         super::measurement::commit(app, next, started, nodes);
     }
-    super::sync::wake(app);
-    let _ = app.emit("design-changed", ());
-    Ok(next)
+    let synchronized = super::sync::accept_commit(app, &result["native_sync"]);
+    let applied_at = synchronized.then(std::time::Instant::now);
+    let notify_after_draw = synchronized
+        && !(std::env::var_os("LAS_NATIVE_DRAG_TRACE").is_some()
+            && std::env::var_os("LAS_NATIVE_RELEASE_NOTIFY_BASELINE").is_some());
+    if !notify_after_draw {
+        super::sync::wake(app);
+        notify_commit(app);
+    }
+    Ok(GestureCommit {
+        revision: next,
+        acknowledged_at,
+        applied_at,
+        notify_after_draw,
+    })
+}
+
+#[derive(Default)]
+pub(crate) struct DragCadence {
+    interval: Option<std::time::Duration>,
+    last_draw: Option<std::time::Instant>,
+}
+
+impl DragCadence {
+    pub(crate) fn configured() -> Self {
+        let interval = std::env::var("LAS_NATIVE_DRAG_INTERVAL_MS")
+            .ok()
+            .and_then(|text| text.parse::<u64>().ok())
+            .filter(|millis| (1..=100).contains(millis))
+            .map(std::time::Duration::from_millis);
+        Self {
+            interval,
+            last_draw: None,
+        }
+    }
+
+    pub(crate) fn interval_ms(&self) -> Option<u128> {
+        self.interval.map(|interval| interval.as_millis())
+    }
+
+    pub(crate) fn waiting_until(&self) -> Option<std::time::Instant> {
+        let until = self.last_draw? + self.interval?;
+        (until > std::time::Instant::now()).then_some(until)
+    }
+
+    pub(crate) fn drawing(&mut self) {
+        self.last_draw = Some(std::time::Instant::now());
+    }
+
+    fn reset(&mut self) {
+        self.last_draw = None;
+    }
 }
 
 pub struct Bridge(pub tauri::AppHandle);
 pub struct Input {
     app: tauri::AppHandle,
     drag_frame_pending: bool,
+    drag_cadence: DragCadence,
+    drag_wake: Option<std::time::Instant>,
 }
 impl PluginBuilder<EventLoopMessage> for Bridge {
     type Plugin = Input;
@@ -373,6 +441,8 @@ impl PluginBuilder<EventLoopMessage> for Bridge {
         Input {
             app: self.0,
             drag_frame_pending: false,
+            drag_cadence: DragCadence::configured(),
+            drag_wake: None,
         }
     }
 }
@@ -382,13 +452,27 @@ impl Plugin<EventLoopMessage> for Input {
         event: &Event<Message<EventLoopMessage>>,
         _: &EventLoopWindowTarget<Message<EventLoopMessage>>,
         _: &EventLoopProxy<Message<EventLoopMessage>>,
-        _: &mut ControlFlow,
+        control_flow: &mut ControlFlow,
         context: EventLoopIterationContext<'_, EventLoopMessage>,
         _: &WebContextStore,
     ) -> bool {
         if matches!(event, Event::MainEventsCleared) {
-            if std::mem::take(&mut self.drag_frame_pending) {
-                redraw(&self.app);
+            if let Some(wake) = self.drag_wake.take() {
+                if *control_flow == ControlFlow::WaitUntil(wake) {
+                    *control_flow = ControlFlow::Wait;
+                }
+            }
+            if self.drag_frame_pending {
+                if let Some(until) = self.drag_cadence.waiting_until() {
+                    if *control_flow == ControlFlow::Wait {
+                        *control_flow = ControlFlow::WaitUntil(until);
+                        self.drag_wake = Some(until);
+                    }
+                } else {
+                    self.drag_frame_pending = false;
+                    self.drag_cadence.drawing();
+                    redraw(&self.app);
+                }
             }
             return false;
         }
@@ -402,6 +486,9 @@ impl Plugin<EventLoopMessage> for Input {
                     .is_some_and(|w| w.label() == "workspace")
             });
             if ours {
+                if self.drag_frame_pending {
+                    self.drag_cadence.drawing();
+                }
                 self.drag_frame_pending = false;
                 self.app.state::<Shared>().lock().unwrap().dirty = true;
                 redraw(&self.app);
@@ -435,6 +522,7 @@ impl Plugin<EventLoopMessage> for Input {
         let drag_motion = n.down && matches!(event, WindowEvent::CursorMoved { .. });
         n.dirty |= !matches!(event, WindowEvent::CursorMoved { .. }) || n.down;
         let mut input = None;
+        let mut notify_after_draw = false;
         let mut primary_click = None;
         match event {
             WindowEvent::ModifiersChanged(modifiers) => {
@@ -624,7 +712,7 @@ impl Plugin<EventLoopMessage> for Input {
                             }
                         }
                         if !ops.is_empty() {
-                            if let Err(error) = commit_gesture(
+                            match commit_gesture(
                                 &self.app,
                                 &mut n,
                                 &snapshot.cursor,
@@ -632,7 +720,8 @@ impl Plugin<EventLoopMessage> for Input {
                                 ops,
                                 moving.then_some((started, doc.nodes.len())),
                             ) {
-                                eprintln!("{error}");
+                                Ok(commit) => notify_after_draw = commit.notify_after_draw,
+                                Err(error) => eprintln!("{error}"),
                             }
                         }
                     }
@@ -645,13 +734,17 @@ impl Plugin<EventLoopMessage> for Input {
             }
         }
         drop(n);
-        if drag_motion {
+        if drag_motion && !notify_after_draw {
             // Process every motion event, then submit one frame for the last
             // preview position when this batch of window events has drained.
             self.drag_frame_pending = true;
         } else {
             self.drag_frame_pending = false;
+            self.drag_cadence.reset();
             redraw(&self.app);
+            if notify_after_draw {
+                notify_commit(&self.app);
+            }
         }
         false
     }

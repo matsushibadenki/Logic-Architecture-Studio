@@ -39,21 +39,48 @@ pub fn poll(app: &tauri::AppHandle) -> Result<(), String> {
             studio_service::native_sync::apply(None, &response)?
         }
     };
-    if previous
+    let cache = app.state::<Cache>();
+    let mut current = cache.0.lock().unwrap();
+    if current.as_ref().map(|s| &s.cursor) != previous.as_ref().map(|s| &s.cursor) {
+        // A commit acknowledgement already advanced this cache.
+        return Ok(());
+    }
+    let theme_changed = previous
         .as_ref()
-        .is_none_or(|p| p.meta["theme"] != snapshot.meta["theme"])
-    {
-        app.set_theme(Some(if snapshot.meta["theme"] == "light" {
+        .is_none_or(|p| p.meta["theme"] != snapshot.meta["theme"]);
+    let light = snapshot.meta["theme"] == "light";
+    let revision = snapshot.meta["revision"].as_u64().unwrap_or(0);
+    *current = Some(snapshot);
+    drop(current);
+    if theme_changed {
+        app.set_theme(Some(if light {
             tauri::Theme::Light
         } else {
             tauri::Theme::Dark
         }));
     }
-    super::measurement::native_transfer(
-        app,
-        snapshot.meta["revision"].as_u64().unwrap_or(0),
-        &response,
-    );
-    *app.state::<Cache>().0.lock().unwrap() = Some(snapshot);
+    super::measurement::native_transfer(app, revision, &response);
     Ok(())
+}
+
+pub fn accept_commit(app: &tauri::AppHandle, response: &serde_json::Value) -> bool {
+    let Some(base) = response["base"].as_str() else {
+        return false;
+    };
+    let cache = app.state::<Cache>();
+    let mut current = cache.0.lock().unwrap();
+    if current
+        .as_ref()
+        .is_none_or(|snapshot| snapshot.cursor != base)
+    {
+        return false;
+    }
+    if let Ok(snapshot) = studio_service::native_sync::apply(current.as_ref(), response) {
+        let revision = snapshot.meta["revision"].as_u64().unwrap_or(0);
+        *current = Some(snapshot);
+        drop(current);
+        super::measurement::native_transfer(app, revision, response);
+        return true;
+    }
+    false
 }

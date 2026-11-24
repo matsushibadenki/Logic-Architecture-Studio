@@ -108,7 +108,14 @@
 - 🟢 [Done] Trace per-preview input wait, CPU assembly, Metal GPU execution interval and display wait. Compare overview wire-warning batching and diagnose drawable backpressure in the shallow-queue trial.
 - 🟢 [Done] Correlate CoreVideo refresh timing with Metal drawable presentation. Compare opt-in single-in-flight preview pacing at 250 Hz on macOS and document its latency and throughput tradeoff.
 - 🟢 [Done] Reuse shaped text and centered glyph ink bounds for adjacent repeated labels in the native canvas. Benchmark the normal preview path at 250 Hz with the 2,000-node fixture.
-- 🟠 [Next] Reduce the window presentation tail under sustained drag input. Track display wait and drawable acquisition together when evaluating scheduling changes.
+- 🟢 [Done] Group sustained-drag preview timings by observed earlier presentations after GPU completion. Matched macOS traces at 250 Hz show two drawables reduced preview input-to-display p95 from 66.87 to 51.44 ms, with drawable acquisition p95 close in both configurations. See docs/PERFORMANCE.md.
+- 🟢 [Done] Add opt-in drag redraw spacing shared by the native scheduler and its replay. Matched 2 Drawable macOS runs at 250 Hz measured lower p95 with 20 ms spacing (51.68 → 46.14 ms) and fewer visible previews (111 → 74). The default remains unpaced.
+- 🟢 [Done] Add an experimental macOS preview path that assembles the scene while the window thread acquires a drawable. Six matched 2 Drawable pairs at 250 Hz measured 51.60 → 50.42 ms median run p95 and 176 visible previews in each arm. See docs/PERFORMANCE.md.
+- 🟠 [Next] Obtain a repeatable sustained-drag tail reduction before enabling a new scheduler by default. Measure acquisition and GPU-to-display wait alongside actual preview throughput.
+- 🟢 [Done] Return the next native delta in a durable position-only commit acknowledgement when its base cursor matches. Apply it before drawing, retain polling for stale bases, and verify the saved-to-visible interval on macOS.
+- 🟢 [Done] Trace committed frames from save acknowledgement through delta application, draw start, GPU execution and Metal presentation. Submit the native frame before notifying WebViews for inline commits.
+- 🟢 [Done] Correlate committed-frame waits with preceding Metal drawables and display refresh targets. Use a two-drawable macOS workspace queue, verified at 250 Hz for a 2,000-node group drag.
+- 🟢 [Done] Reuse applied macOS panel layout across GPU redraws when window dimensions, scale, splitter sizes and panel positions agree. Verify Inspector floating, redocking and splitter resizing in the native window.
 - 🟢 [Done] Reuse the last drag preview's routes when placement is unchanged. Refilter for the current viewport and invalidate the cache on committed geometry changes.
 - 🟢 [Done] Reuse preview routes for a position-only commit when the full changed placement matches. Verify the 2,000-node commit produces a scene identical to a fresh rebuild.
 - 🟢 [Done] Compare native pointer-up to durable-save confirmation and canonical Metal presentation with and without preview-route reuse. Verified matching persisted four-node moves on macOS. End-to-end p95 did not improve in the measured runs.
@@ -177,7 +184,15 @@
 - 🟢 [Done] EDA tools inherit a 120 CPU-second per-process limit on Unix. On macOS the runner also stops the process group when sampled CPU time exceeds 90 seconds in a stage, including work already attributed to reaped children.
 - 🟢 [Done] Linux external EDA stages support delegated cgroup v2 through `LAS_EDA_CGROUP`. The kernel enforces two CPU cores of bandwidth and a 4 GiB memory limit with group OOM killing. The runner stops the cgroup at a cumulative 45 CPU-second stage budget.
 - 🟠 [Next] Kernel-enforced aggregate CPU and memory limits on macOS and broader process isolation on other platforms.
-- 🟠 [Next] Internal model adapter, MCP client and budgeted autonomous exploration loop.
+- 🟢 [Done] One-shot design proposals in Preferences from OpenAI, Google Gemini and OpenAI-compatible local servers. The Rust service validates the circuit and source revision before showing a reviewable diff, and the user explicitly applies the patch.
+- 🟢 [Done] Codex and Google Antigravity setup for the workspace MCP tools, including the authenticated desktop approval flow. See docs/MCP.md.
+- 🟢 [Done] Codex CLI MCP smoke test on macOS. Discovered 49 tools and executed `project.inspect` over stdio against a disposable workspace.
+- 🟢 [Done] Google Antigravity desktop app connected to the authenticated loopback MCP server and discovered 49 tools in a temporary ALU32 project on macOS.
+- 🟢 [Done] macOS approval control check on 2026-11-24. An independent HTTP MCP client read revision 0, previewed and submitted a node rename, then retried after approval in Preferences. The GPU canvas, library, and inspector showed the renamed node at revision 1.
+- 🟢 [Done] Google Antigravity desktop MCP compatibility via `/mcp/portable`. The client showed 49 enabled tools with underscore-separated names. Its native calls read ALU32 at r000, previewed and submitted a rename, retried after macOS diff approval, and read back r001. Verified the renamed node on the native GPU canvas.
+- ⭕️ [Pending] Live OpenAI and Gemini proposal generation, diff review, and application. Provider API credentials were unavailable in the test environment.
+- 🟢 [Done] Design AI proposals can be compared with the current circuit before applying. Both run the saved stimulus and assertion table in Rust, with revision- and stimulus-version-tagged summaries. The comparison leaves the workspace and its active trace untouched.
+- 🟢 [Done] Internal read-only rmcp client and budgeted Design AI exploration. Each run allows 2–4 model requests with a 90-second deadline, feeds assertion summaries into subsequent proposals, and displays candidates against saved stimuli. Applying a selected candidate checks the circuit revision and stimulus version. macOS QA with a loopback fixture verified two candidates, first-failure detail, stop at 3/3 requests including one rejected response, and the selected change on the GPU canvas at r001.
 - 🔴 [Later] Planned GGUF model support: [gemma-4-31B-it-ARA-heretic-GGUF](https://huggingface.co/mradermacher/gemma-4-31B-it-ARA-heretic-GGUF); runtime integration/inference unimplemented. See [model support plan](docs/MODELS.md).
 - 🔴 [Later] Ripple/Carry-select/Brent–Kung/Kogge–Stone generators and measured Pareto optimization.
 - 🔴 [Later] OpenROAD/KLayout flow, FPGA deployment and multiple-agent research roles.

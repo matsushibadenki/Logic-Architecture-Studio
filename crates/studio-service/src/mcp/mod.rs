@@ -11,7 +11,7 @@ use rmcp::{
     ErrorData, ServerHandler, ServiceExt,
 };
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 mod adapters;
 mod security;
 use security::{Decision, Principal, Security};
@@ -24,6 +24,7 @@ const EXPLORE: &str = "explore_architecture";
 struct StudioMcp {
     registry: Arc<ToolRegistry>,
     tools: Arc<[Tool]>,
+    portable_names: Arc<BTreeMap<String, String>>,
     sample: bool,
     security: Option<Arc<Security>>,
     on_change: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -31,6 +32,23 @@ struct StudioMcp {
 }
 
 impl StudioMcp {
+    fn with_portable_names(mut self) -> Self {
+        let mut tools = self.tools.to_vec();
+        let names = tools
+            .iter_mut()
+            .map(|tool| {
+                let canonical = tool.name.to_string();
+                let alias = canonical.replace('.', "_");
+                tool.name = alias.clone().into();
+                (alias, canonical)
+            })
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(names.len(), tools.len(), "MCP portable tool name collision");
+        self.tools = tools.into();
+        self.portable_names = Arc::new(names);
+        self
+    }
+
     async fn execute(&self, method: String, args: Value) -> Result<Value, AdapterError> {
         let registry = self.registry.clone();
         tokio::task::spawn_blocking(move || registry.invoke(&method, args))
@@ -86,7 +104,10 @@ impl ServerHandler for StudioMcp {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        let name = request.name.as_ref();
+        let name = self
+            .portable_names
+            .get(request.name.as_ref())
+            .map_or(request.name.as_ref(), String::as_str);
         if !self.registry.contains(name) {
             return Err(ErrorData::invalid_params(
                 "Unknown tool",
@@ -363,11 +384,60 @@ fn bridge(
     Ok(StudioMcp {
         registry: Arc::new(registry),
         tools: tools.into(),
+        portable_names: Arc::default(),
         sample,
         security: None,
         on_change: None,
         subscriptions: Arc::new(tokio::sync::Semaphore::new(16)),
     })
+}
+
+/// A read-only MCP peer on an in-process transport. No listener or credentials are needed.
+pub struct InternalClient {
+    client: rmcp::service::RunningService<rmcp::service::RoleClient, ()>,
+    _server: rmcp::service::RunningService<RoleServer, StudioMcp>,
+}
+
+impl InternalClient {
+    pub async fn connect(root: std::path::PathBuf) -> Result<Self, String> {
+        let (client, server) = tokio::io::duplex(64 * 1024);
+        let (client_read, client_write) = tokio::io::split(client);
+        let (server_read, server_write) = tokio::io::split(server);
+        let handler = bridge(root, false, false).map_err(|error| error.to_string())?;
+        let (client, server) = tokio::join!(
+            ().serve(AsyncRwTransport::new(client_read, client_write)),
+            handler.serve(AsyncRwTransport::new(server_read, server_write))
+        );
+        Ok(Self {
+            client: client.map_err(|error| error.to_string())?,
+            _server: server.map_err(|error| error.to_string())?,
+        })
+    }
+
+    pub async fn call(&self, name: &'static str, args: Value) -> Result<Value, String> {
+        let params = CallToolRequestParams::new(name).with_arguments(
+            args.as_object()
+                .ok_or("Expected MCP arguments object")?
+                .clone(),
+        );
+        let reply = self
+            .client
+            .call_tool(params)
+            .await
+            .map_err(|error| error.to_string())?;
+        let body = reply
+            .structured_content
+            .ok_or("Missing structured MCP result")?;
+        if reply.is_error == Some(true) {
+            return Err(body["error"]["message"]
+                .as_str()
+                .unwrap_or("MCP tool failed")
+                .to_owned());
+        }
+        body.get("result")
+            .cloned()
+            .ok_or_else(|| "Missing MCP result".into())
+    }
 }
 
 fn router(
@@ -382,9 +452,18 @@ fn router(
         .enforce_origin_validation()
         .with_max_request_body_bytes(1_048_576)
         .with_json_response(true);
+    let portable = mcp.clone().with_portable_names();
+    let portable_http: StreamableHttpService<StudioMcp, LocalSessionManager> =
+        StreamableHttpService::new(
+            move || Ok(portable.clone()),
+            Default::default(),
+            config.clone(),
+        );
     let http: StreamableHttpService<StudioMcp, LocalSessionManager> =
         StreamableHttpService::new(move || Ok(mcp.clone()), Default::default(), config);
-    let mut router = axum::Router::new().route_service("/mcp", http);
+    let mut router = axum::Router::new()
+        .route_service("/mcp", http)
+        .route_service("/mcp/portable", portable_http);
     if external_approval {
         router = router
             .route("/approvals/{id}", axum::routing::get(security::preview))

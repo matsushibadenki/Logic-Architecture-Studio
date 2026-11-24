@@ -4,6 +4,7 @@ mod drag_measurement;
 mod layout_store;
 mod mcp;
 mod measurement;
+mod model;
 mod native;
 mod panels;
 mod preferences;
@@ -31,6 +32,7 @@ async fn command(
         "project.sync"
             | "project.inspect"
             | "design.get_ir"
+            | "design.check_proposal"
             | "simulation.state"
             | "view.routes"
             | "job.status"
@@ -317,7 +319,7 @@ fn main() {
                 studio_renderer::Renderer::new(Arc::new(window.clone()), size.width, size.height)
                     .map_err(std::io::Error::other)?;
             #[cfg(target_os = "macos")]
-            if drag_trace.is_some() && std::env::var_os("LAS_NATIVE_DRAG_SHALLOW_QUEUE").is_some() {
+            if drag_trace.is_none() || std::env::var_os("LAS_NATIVE_DRAG_SHALLOW_QUEUE").is_some() {
                 renderer.set_frame_latency(1);
             }
             app.manage(Arc::new(Mutex::new(native::Native {
@@ -404,6 +406,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             command,
+            model::model_propose,
+            model::model_explore,
             preferences::preferences_open,
             mcp::mcp_status,
             mcp::mcp_configure,

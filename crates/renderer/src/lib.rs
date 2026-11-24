@@ -18,7 +18,7 @@ use unge_render::{
     LabelCatalog, LabelText, NodeLabels, NodeTone, SceneIndex, SurfaceRenderer, Theme,
 };
 
-pub use design_core::{NODE_WIDTH, node_height};
+pub use design_core::{node_height, NODE_WIDTH};
 fn text(en: &str, ja: &str, zh: &str) -> LabelText {
     LabelText {
         en: en.into(),
@@ -295,6 +295,7 @@ pub struct Renderer {
     node_colors: BTreeMap<String, String>,
     gate_symbols: bool,
     hide_gate_frames: bool,
+    overlap_drag_drawable: bool,
     theme: Theme,
 }
 impl Renderer {
@@ -314,6 +315,8 @@ impl Renderer {
             node_colors: BTreeMap::new(),
             gate_symbols: false,
             hide_gate_frames: false,
+            overlap_drag_drawable: cfg!(target_os = "macos")
+                && std::env::var_os("LAS_GPU_OVERLAP_DRAWABLE").is_some(),
             theme: Theme::Dark,
         })
     }
@@ -485,34 +488,54 @@ impl Renderer {
                 self.displayed_sample_revision = Some(revision);
             }
         }
-        let assembly = observe.as_ref().map(|_| std::time::Instant::now());
-        let mut scene = projection
-            .index
-            .scene_with_theme(
-                view.viewport,
-                &view.selection,
-                view.interaction.preview(),
-                &projection.labels,
-                match locale {
-                    "ja" => Locale::Ja,
-                    "zh" => Locale::ZhCn,
-                    _ => Locale::En,
-                },
-                self.theme,
-            )
-            .map_err(|e| e.to_string())?;
-        if let Some([x, y, w, h]) = self.dock_target {
-            let p = view.viewport.to_world([x, y]);
-            let mut color = self.theme.palette().accent.linear();
-            color[3] = 0.3;
-            let width = w / view.viewport.zoom;
-            let height = h / view.viewport.zoom;
-            scene.quads.push(unge_render::Quad {
-                rect: [p[0] + width / 2., p[1] + height / 2., width, height],
-                color,
-                params: [0., 6., 0., 0.],
-            });
+        let theme = self.theme;
+        let dock_target = self.dock_target;
+        let index = &mut projection.index;
+        let labels = &projection.labels;
+        let viewport = view.viewport;
+        let selection = &view.selection;
+        let preview = view.interaction.preview();
+        let dragging = !preview.placement.is_empty();
+        let assemble = move || {
+            // Own the exclusive borrow so the retained cache never requires Sync.
+            let index = index;
+            let mut scene = index
+                .scene_with_theme(
+                    viewport,
+                    selection,
+                    preview,
+                    labels,
+                    match locale {
+                        "ja" => Locale::Ja,
+                        "zh" => Locale::ZhCn,
+                        _ => Locale::En,
+                    },
+                    theme,
+                )
+                .map_err(|e| e.to_string())?;
+            if let Some([x, y, w, h]) = dock_target {
+                let p = viewport.to_world([x, y]);
+                let mut color = theme.palette().accent.linear();
+                color[3] = 0.3;
+                let width = w / viewport.zoom;
+                let height = h / viewport.zoom;
+                scene.quads.push(unge_render::Quad {
+                    rect: [p[0] + width / 2., p[1] + height / 2., width, height],
+                    color,
+                    params: [0., 6., 0., 0.],
+                });
+            }
+            Ok(scene)
+        };
+        if self.overlap_drag_drawable && dragging {
+            let timed = observe.is_some();
+            let drawn =
+                self.surface
+                    .draw_region_overlapped(view.viewport, graph, observe, assemble)?;
+            return Ok(if timed { drawn } else { None });
         }
+        let assembly = observe.as_ref().map(|_| std::time::Instant::now());
+        let scene = assemble()?;
         if let Some(observe) = observe {
             let assembly_ms = assembly.unwrap().elapsed().as_secs_f64() * 1000.;
             return Ok(self

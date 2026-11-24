@@ -5,7 +5,15 @@ pub const IDS: [&str; 3] = ["library", "inspector", "results"];
 #[derive(Default)]
 pub struct Panels {
     pub homes: Mutex<BTreeMap<String, String>>,
-    pub placement: Mutex<()>,
+    placement: Mutex<Option<AppliedLayout>>,
+}
+
+struct AppliedLayout {
+    size: [u32; 2],
+    scale: f64,
+    widths: [f64; 3],
+    positions: [String; 3],
+    graph: [f32; 4],
 }
 pub fn call(app: &tauri::AppHandle, method: &str, args: Value) -> Result<Value, String> {
     studio_service::call(
@@ -36,12 +44,13 @@ pub async fn panel_place(
 }
 pub fn place(app: &tauri::AppHandle, id: &str, target: &str) -> Result<(), String> {
     let panels = app.state::<Panels>();
-    let _placement = panels.placement.lock().map_err(|e| e.to_string())?;
+    let mut placement = panels.placement.lock().map_err(|e| e.to_string())?;
     if !IDS.contains(&id)
         || !["left", "right", "bottom", "floating", "hidden", "restore"].contains(&target)
     {
         return Err("Invalid panel placement".into());
     }
+    *placement = None;
     let snapshot = call(app, "project.inspect", json!({}))?;
     let previous = position(&snapshot, id);
     let state = app.state::<Panels>();
@@ -148,6 +157,21 @@ pub fn layout(app: &tauri::AppHandle, s: &Value, size: [u32; 2], scale: f64) -> 
         .lock()
         .unwrap()
         .unwrap_or([300., 300., 230.]);
+    // Reparenting can call the main loop. Keep the same transaction lock
+    // even on a cache hit so an in-flight placement can finish first.
+    let panels = app.state::<Panels>();
+    let mut applied = panels.placement.try_lock().ok()?;
+    let positions = IDS.map(|id| position(s, id));
+    if let Some(previous) = applied.as_ref().filter(|previous| {
+        previous.size == size
+            && previous.scale == scale
+            && previous.widths == values
+            && previous.positions.each_ref().map(String::as_str) == positions
+    }) {
+        return Some(previous.graph);
+    }
+    *applied = None;
+    let mut complete = true;
     let lw = ((values[0] * scale) as u32).min(size[0] * 35 / 100);
     let rw = ((values[1] * scale) as u32).min(size[0] * 35 / 100);
     let bottom = ((values[2] * scale) as u32).min(size[1] / 2);
@@ -161,17 +185,15 @@ pub fn layout(app: &tauri::AppHandle, s: &Value, size: [u32; 2], scale: f64) -> 
         size[0].saturating_sub(left + right) as f32,
         size[1].saturating_sub(top + bh) as f32,
     ];
-    // Placement can call into the main loop to show a floating window.
-    // Defer the layout until the placement transaction is finished.
-    let panels = app.state::<Panels>();
-    let Ok(_placement) = panels.placement.try_lock() else {
-        return None;
-    };
     if let Some(w) = app.get_webview("controls") {
-        let _ = w.set_bounds(tauri::Rect {
-            position: tauri::PhysicalPosition::new(0, 0).into(),
-            size: tauri::PhysicalSize::new(size[0], top).into(),
-        });
+        complete &= w
+            .set_bounds(tauri::Rect {
+                position: tauri::PhysicalPosition::new(0, 0).into(),
+                size: tauri::PhysicalSize::new(size[0], top).into(),
+            })
+            .is_ok();
+    } else {
+        complete = false;
     }
     let grip = (7. * scale) as u32;
     for (zone, x, y, w, h, visible) in [
@@ -199,26 +221,33 @@ pub fn layout(app: &tauri::AppHandle, s: &Value, size: [u32; 2], scale: f64) -> 
                 let info = metrics(i, values, size, scale);
                 let state = app.state::<Gestures>();
                 let mut announced = state.announced.lock().ok()?;
-                if announced.get(zone) != Some(&info)
-                    && app
+                if announced.get(zone) != Some(&info) {
+                    if app
                         .emit_to(
                             tauri::EventTarget::webview(web.label()),
                             "splitter-state",
                             &info,
                         )
                         .is_ok()
-                {
-                    announced.insert(zone.into(), info);
+                    {
+                        announced.insert(zone.into(), info);
+                    } else {
+                        complete = false;
+                    }
                 }
                 drop(announced);
-                let _ = web.set_bounds(tauri::Rect {
-                    position: tauri::PhysicalPosition::new(x as i32, y as i32).into(),
-                    size: tauri::PhysicalSize::new(w, h).into(),
-                });
-                let _ = web.show();
+                complete &= web
+                    .set_bounds(tauri::Rect {
+                        position: tauri::PhysicalPosition::new(x as i32, y as i32).into(),
+                        size: tauri::PhysicalSize::new(w, h).into(),
+                    })
+                    .is_ok();
+                complete &= web.show().is_ok();
             } else {
-                let _ = web.hide();
+                complete &= web.hide().is_ok();
             }
+        } else {
+            complete = false;
         }
     }
     for zone in ["left", "right", "bottom"] {
@@ -246,20 +275,35 @@ pub fn layout(app: &tauri::AppHandle, s: &Value, size: [u32; 2], scale: f64) -> 
                 ),
             };
             if let Some(web) = app.get_webview(&format!("panel-{id}")) {
-                let _ = web.set_bounds(tauri::Rect {
-                    position: tauri::PhysicalPosition::new(x as i32, y as i32).into(),
-                    size: tauri::PhysicalSize::new(w.max(1), h.max(1)).into(),
-                });
-                let _ = web.show();
+                complete &= web
+                    .set_bounds(tauri::Rect {
+                        position: tauri::PhysicalPosition::new(x as i32, y as i32).into(),
+                        size: tauri::PhysicalSize::new(w.max(1), h.max(1)).into(),
+                    })
+                    .is_ok();
+                complete &= web.show().is_ok();
+            } else {
+                complete = false;
             }
         }
     }
     for id in IDS {
         if position(s, id) == "hidden" {
             if let Some(w) = app.get_webview(&format!("panel-{id}")) {
-                let _ = w.hide();
+                complete &= w.hide().is_ok();
+            } else {
+                complete = false;
             }
         }
+    }
+    if complete {
+        *applied = Some(AppliedLayout {
+            size,
+            scale,
+            widths: values,
+            positions: positions.map(str::to_owned),
+            graph,
+        });
     }
     Some(graph)
 }

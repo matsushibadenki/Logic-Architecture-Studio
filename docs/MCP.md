@@ -30,6 +30,53 @@ Resource: `logic://workspace/ir`. Prompt: `explore_architecture`.
 
 The self-contained tool schemas define a deliberately small JSON Schema vocabulary; the server validates every keyword it emits and then deserializes typed Rust operations and validates graph semantics. It does not accept arbitrary external schemas or resolve remote references.
 
+## Codex and Google Antigravity
+
+Use the workspace root that the desktop app opened. For local stdio in Codex, register the bridge with the following command. Use absolute paths.
+
+```sh
+codex mcp add logic-studio \
+  --env LAS_WORKSPACE=/absolute/path/to/workspace \
+  -- /absolute/path/to/logic-mcp
+```
+
+In the Google Antigravity desktop app, open **Customizations → Installed → MCP Servers** to inspect connections. For a single project, add the server entry to `.agents/mcp_config.json` in a folder registered with that project, then start a conversation for that project. The stdio configuration above starts with read-only access. [Codex MCP configuration](https://developers.openai.com/codex/mcp) · [Antigravity App MCP configuration](https://antigravity.google/docs/mcp/#antigravity-app) · [Project configuration discovery](https://antigravity.google/docs/customization-discovery/)
+
+For design edits with desktop approval, start the server in **Preferences → MCP**, grant circuit read and write scopes, and keep desktop write approval enabled. Use the port and token shown in the app. Restart/reload the client after updating its configuration.
+
+Codex `config.toml`:
+
+```toml
+[mcp_servers.logic-studio]
+url = "http://127.0.0.1:8765/mcp"
+bearer_token_env_var = "LAS_MCP_TOKEN"
+```
+
+Supply `LAS_MCP_TOKEN` in the Codex process environment. For Antigravity, append `/portable` to the displayed MCP URL. This endpoint advertises underscore-separated tool names for clients that filter out dotted names. It uses the same bearer token, scopes, and approval queue. Merge the entry into Antigravity’s global `~/.gemini/config/mcp_config.json`, reload the app, and check **Customizations → Installed → MCP Servers** for enabled tools. The global registration was used for the verified desktop workflow. Keep the token private.
+
+```json
+{
+  "mcpServers": {
+    "logic-studio": {
+      "serverUrl": "http://127.0.0.1:8765/mcp/portable",
+      "headers": { "Authorization": "Bearer REPLACE_WITH_APP_TOKEN" },
+      "enabledTools": ["project_inspect", "design_propose_patch", "design_apply_patch"],
+      "tools": {
+        "project_inspect": { "eager": true },
+        "design_propose_patch": { "eager": true },
+        "design_apply_patch": { "eager": true }
+      }
+    }
+  }
+}
+```
+
+Keep the token in a private client configuration. Replace the port in these examples with the one displayed in the app. Ask the client to inspect the circuit, preview a patch at the current revision, and submit the patch for desktop review. Verification and RTL generation are available through MCP tools. For access from another machine, use the SSH tunnel below.
+
+The Codex CLI stdio setup was checked on macOS with a temporary workspace. Codex discovered 49 tools and successfully returned its initial revision using `project.inspect`.
+
+On 2026-11-24, the original dotted tool names appeared in discovery but showed zero enabled tools in Antigravity. With `/mcp/portable` and a global registration, the desktop app displayed 49 enabled tools. Its native MCP calls read ALU32 at r000, previewed a rename, and submitted it for approval. After the user approved the diff in macOS Preferences, Antigravity resent the same patch and read back r001. The new name appeared on the GPU canvas, in the library, and in the inspector. The existing `/mcp` and stdio clients continue to use dotted names.
+
 ## SSH access and circuit updates (Phase 6)
 
 Start MCP in **Preferences → MCP** on the Mac and note the local port. From a separate device with an authorized SSH account on that Mac, open a local forward using the same port at both ends. OpenSSH encrypts the connection and verifies the Mac's SSH host key. The MCP endpoint is still bound to IPv4 loopback, so the only network-facing service in this setup is the existing SSH service. [OpenSSH local forwarding](https://man.openbsd.org/ssh)

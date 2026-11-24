@@ -1,5 +1,7 @@
 # Logic Architecture Studio
 
+通过[设计 AI](MODELS.md)生成电路修改方案，或通过 [MCP](MCP.md#codex-and-google-antigravity)连接 Codex 和 Google Antigravity。
+
 基于 Tauri 2 / Rust 的 EDA 初始实现。GUI 和 stdio MCP 共用同一个 Rust 设计服务。界面支持英语、日语和简体中文。
 
 运行 `npm ci`，然后运行 `npm run desktop`。浏览器开发模式需要分别运行 `npm run core` 和 `npm run dev`。可通过 `LAS_WORKSPACE` 指定工作区目录。目前以 macOS 为开发目标，IPC 使用 Unix socket。

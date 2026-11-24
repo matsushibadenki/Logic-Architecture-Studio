@@ -108,7 +108,8 @@ pub fn begin_release_frame(revision: u64) -> bool {
         {
             return false;
         }
-        let (_, frame) = slot.take().unwrap();
+        let (_, mut frame) = slot.take().unwrap();
+        frame.delivered_at = CACurrentMediaTime();
         FRAME.with(|current| current.replace(Some(frame)));
         true
     })
@@ -178,6 +179,7 @@ pub fn install(window: &tauri::Window) -> Result<Option<PathBuf>, String> {
 
 #[derive(Default)]
 struct Pending {
+    cadence: native::DragCadence,
     input: Option<Input>,
     queued: bool,
 }
@@ -376,6 +378,8 @@ struct Release {
     revision: u64,
     released_at: f64,
     saved_at: f64,
+    synchronized_in_ack: bool,
+    delta_applied_at: Option<f64>,
 }
 
 fn commit_release(
@@ -385,13 +389,15 @@ fn commit_release(
     zoom: f32,
     presented: mpsc::Sender<Sample>,
 ) -> Result<Release, String> {
-    // Draw the exact final placement before issuing the same Up and commit
-    // used by live native input. This also handles coalesced final motions.
-    let final_preview = Input {
-        index: COUNT + 1,
-        ..last
-    };
-    deliver(app, final_preview, anchor, zoom, presented.clone(), None)?;
+    // The live handler commits the release location directly. Retain the
+    // old forced preview only for A/B tracing of its queued drawable.
+    if std::env::var_os("LAS_NATIVE_RELEASE_EXTRA_PREVIEW_BASELINE").is_some() {
+        let final_preview = Input {
+            index: COUNT + 1,
+            ..last
+        };
+        deliver(app, final_preview, anchor, zoom, presented.clone(), None)?;
+    }
     let snapshot = app
         .state::<sync::Cache>()
         .0
@@ -419,7 +425,7 @@ fn commit_release(
     if operations.len() != MOVED.len() {
         return Err("release did not commit exactly four nodes".into());
     }
-    let next = native::commit_gesture(
+    let commit = native::commit_gesture(
         app,
         &mut native,
         &snapshot.cursor,
@@ -427,7 +433,10 @@ fn commit_release(
         operations,
         None,
     )?;
-    let saved_at = CACurrentMediaTime();
+    let next = commit.revision;
+    let now = CACurrentMediaTime();
+    let saved_at = now - commit.acknowledged_at.elapsed().as_secs_f64();
+    let delta_applied_at = commit.applied_at.map(|t| now - t.elapsed().as_secs_f64());
     RELEASE_FRAME.with(|slot| {
         slot.replace(Some((
             next,
@@ -443,10 +452,17 @@ fn commit_release(
             },
         )))
     });
+    drop(native);
+    native::redraw(app);
+    if commit.notify_after_draw {
+        native::notify_commit(app);
+    }
     Ok(Release {
         revision: next,
         released_at,
         saved_at,
+        synchronized_in_ack: commit.applied_at.is_some(),
+        delta_applied_at,
     })
 }
 
@@ -507,7 +523,12 @@ fn replay(app: &tauri::AppHandle) -> Result<serde_json::Value, String> {
     let clock = DisplayClock::start(display, refresh)?;
     let paced = std::env::var_os("LAS_NATIVE_DRAG_PRESENT_PACED").is_some();
     let in_flight = paced.then(|| Arc::new(AtomicBool::new(false)));
-    let pending = Arc::new(Mutex::new(Pending::default()));
+    let cadence = native::DragCadence::configured();
+    let min_draw_interval_ms = cadence.interval_ms();
+    let pending = Arc::new(Mutex::new(Pending {
+        cadence,
+        ..Default::default()
+    }));
     let (presented, frames_receiver) = mpsc::channel();
     let (errors, failures) = mpsc::channel();
     let start = Instant::now();
@@ -529,6 +550,7 @@ fn replay(app: &tauri::AppHandle) -> Result<serde_json::Value, String> {
             let mut pending = pending.lock().unwrap();
             pending.input = Some(input);
             if pending.queued
+                || pending.cadence.waiting_until().is_some()
                 || in_flight
                     .as_ref()
                     .is_some_and(|flag| flag.load(Ordering::Acquire))
@@ -552,6 +574,7 @@ fn replay(app: &tauri::AppHandle) -> Result<serde_json::Value, String> {
                 {
                     return;
                 }
+                pending.cadence.drawing();
                 pending.input.take()
             };
             if let Some(input) = input {
@@ -594,15 +617,38 @@ fn replay(app: &tauri::AppHandle) -> Result<serde_json::Value, String> {
             sample => stages.push(sample),
         }
     }
-    let release_display = frames
+    let committed_frame = frames
         .iter()
-        .find(|frame| frame.input == COUNT && frame.presented_at > 0.)
-        .map(|frame| frame.presented_at);
+        .find(|frame| frame.input == COUNT && frame.presented_at > 0.);
+    let release_display = committed_frame.map(|frame| frame.presented_at);
+    let release_draw_start = committed_frame.map(|frame| frame.delivered_at);
+    let release_stages: Vec<_> = stages
+        .iter()
+        .filter(|sample| match sample {
+            Sample::Cpu { input, .. } | Sample::Gpu { input, .. } => *input == COUNT,
+            Sample::Presented(_) => false,
+        })
+        .collect();
+    let release_queue: Vec<_> = frames
+        .iter()
+        .filter(|frame| frame.input != COUNT && frame.presented_at > 0.)
+        .filter(|frame| release_display.is_some_and(|shown| frame.presented_at <= shown))
+        .map(|frame| {
+            serde_json::json!({
+                "drawable_id": frame.drawable_id,
+                "presented_at": frame.presented_at,
+                "forced_final_preview": frame.input == COUNT + 1,
+            })
+        })
+        .collect();
     frames.retain(|frame| frame.input < COUNT);
-    stages.retain(|sample| match sample {
-        Sample::Cpu { input, .. } | Sample::Gpu { input, .. } => *input < COUNT,
-        Sample::Presented(_) => false,
-    });
+    let preview_stages: Vec<_> = stages
+        .iter()
+        .filter(|sample| match sample {
+            Sample::Cpu { input, .. } | Sample::Gpu { input, .. } => *input < COUNT,
+            Sample::Presented(_) => false,
+        })
+        .collect();
     let failures: Vec<_> = failures.try_iter().collect();
     drop(clock);
     let refresh: Vec<_> = refresh_log.try_iter().collect();
@@ -613,9 +659,11 @@ fn replay(app: &tauri::AppHandle) -> Result<serde_json::Value, String> {
         .unwrap_or_default();
     Ok(
         serde_json::json!({"nodes": 2000, "moved": MOVED, "target_hz": 250,
-        "canvas_window_px": [width, height], "zoom":zoom, "inputs": inputs, "frames": frames, "stages": stages, "errors": failures,
-        "refresh": refresh, "display": display, "present_paced": paced,
+        "canvas_window_px": [width, height], "zoom":zoom, "inputs": inputs, "frames": frames, "stages": preview_stages, "errors": failures,
+        "refresh": refresh, "display": display, "present_paced": paced, "min_draw_interval_ms": min_draw_interval_ms,
         "release": release, "release_display_at": release_display,
+        "release_draw_start_at": release_draw_start, "release_stages": release_stages,
+        "release_queue": release_queue,
         "frame_latency": if std::env::var_os("LAS_NATIVE_DRAG_SHALLOW_QUEUE").is_some() { 1 } else { 2 }}),
     )
 }

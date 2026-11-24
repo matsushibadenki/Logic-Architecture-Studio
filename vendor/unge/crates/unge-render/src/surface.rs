@@ -236,22 +236,84 @@ impl SurfaceRenderer {
         observe: Option<GpuExecutionObserver>,
     ) -> Result<Option<CpuSurfaceFrameTimings>, String> {
         let total = TIMED.then(Instant::now);
+        let Some(frame) = self.acquire_region(graph_size)? else {
+            return Ok(None);
+        };
+        let acquire_ms = elapsed_ms(total);
+        self.draw_acquired::<TIMED>(
+            frame, scene, viewport, graph_size, observe, acquire_ms, total,
+        )
+        .map(Some)
+    }
+
+    /// Keep drawable access on the window thread while CPU scene assembly runs independently.
+    pub fn draw_region_overlapped(
+        &mut self,
+        viewport: Viewport,
+        graph_size: [u32; 2],
+        observe: Option<GpuExecutionObserver>,
+        assemble: impl FnOnce() -> Result<Scene, String> + Send,
+    ) -> Result<Option<(f64, CpuSurfaceFrameTimings)>, String> {
+        let total = observe.as_ref().map(|_| Instant::now());
+        let (acquired, assembled) = std::thread::scope(|scope| {
+            let worker = std::thread::Builder::new()
+                .spawn_scoped(scope, move || {
+                    let start = total.map(|_| Instant::now());
+                    let scene = assemble()?;
+                    Ok::<_, String>((scene, elapsed_ms(start)))
+                })
+                .map_err(|error| error.to_string())?;
+            let acquire = total.map(|_| Instant::now());
+            let frame = self.acquire_region(graph_size);
+            Ok::<_, String>(((frame, elapsed_ms(acquire)), worker.join()))
+        })?;
+        let ((frame, acquire_ms), (scene, assembly_ms)) = (
+            acquired,
+            assembled.map_err(|_| "Scene assembly worker panicked")??,
+        );
+        let Some(frame) = frame? else { return Ok(None) };
+        let result = if total.is_some() {
+            self.draw_acquired::<true>(
+                frame, &scene, viewport, graph_size, observe, acquire_ms, total,
+            )
+        } else {
+            self.draw_acquired::<false>(frame, &scene, viewport, graph_size, None, 0., None)
+        }?;
+        Ok(Some((assembly_ms, result)))
+    }
+
+    fn acquire_region(
+        &mut self,
+        graph_size: [u32; 2],
+    ) -> Result<Option<wgpu::SurfaceTexture>, String> {
         if graph_size[0] > self.config.width || graph_size[1] > self.config.height {
             return Err("graph region exceeds surface size".into());
         }
         if self.suspended || graph_size.contains(&0) {
             return Ok(None);
         }
-        let frame = match self.surface.get_current_texture() {
-            Ok(frame) => frame,
+        match self.surface.get_current_texture() {
+            Ok(frame) => Ok(Some(frame)),
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                 self.surface.configure(&self.device, &self.config);
-                return Ok(None);
+                Ok(None)
             }
-            Err(wgpu::SurfaceError::Timeout) => return Ok(None),
-            Err(error) => return Err(error.to_string()),
-        };
-        let acquire_ms = elapsed_ms(total);
+            Err(wgpu::SurfaceError::Timeout) => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_acquired<const TIMED: bool>(
+        &mut self,
+        frame: wgpu::SurfaceTexture,
+        scene: &Scene,
+        viewport: Viewport,
+        graph_size: [u32; 2],
+        observe: Option<GpuExecutionObserver>,
+        acquire_ms: f64,
+        total: Option<Instant>,
+    ) -> Result<CpuSurfaceFrameTimings, String> {
         let prepare = TIMED.then(Instant::now);
         self.renderer
             .prepare_sized(&self.device, &self.queue, scene, viewport, graph_size)
@@ -287,13 +349,13 @@ impl SurfaceRenderer {
         let encode_submit_ms = elapsed_ms(encode);
         let present = TIMED.then(Instant::now);
         frame.present();
-        Ok(Some(CpuSurfaceFrameTimings {
+        Ok(CpuSurfaceFrameTimings {
             acquire_ms,
             prepare_ms,
             encode_submit_ms,
             present_call_ms: elapsed_ms(present),
             total_ms: elapsed_ms(total),
-        }))
+        })
     }
 }
 

@@ -533,3 +533,193 @@ slowest after run, 76.62 ms elapsed before save confirmation and 164.92 ms
 after it. The offscreen synchronization improvement did not translate to
 a demonstrated save or presentation latency improvement in this small
 window-level comparison.
+
+### Reusing native panel layout
+
+The host now reuses successfully applied WebView bounds and visibility
+while the window dimensions, scale, splitter sizes and panel positions
+are unchanged. Panel placement invalidates the cache before starting its
+transaction. macOS manual QA floated the Inspector, docked it back on the
+right, and changed the right splitter from 300 to 310 points.
+
+Four alternating Apple M4 release pairs used the 2,000-node, four-node
+window-level replay at 249.76–249.80 Hz. The median of run p95 values for
+pre-GPU time outside scene assembly was 13.72 ms before and 13.50 ms
+after. Input-to-display p95 was 66.70 ms before and 66.76 ms after.
+Visible previews totaled 130 before and 136 after. This confirms the
+elimination of layout work on cache hits but does not establish an
+end-to-end latency improvement.
+
+### Native position commit with an inline delta
+
+For a position-only native gesture based on the current sync cursor, the
+service returns the same filtered delta that a subsequent sync request
+would return. The response is sent after durable storage succeeds. The
+native host applies the acknowledged delta to the matching cache before
+drawing, skipping the separate sync round trip on the presentation path.
+A stale or mismatched cursor uses the ordinary sync loop. Responses from
+polls that raced with a newer acknowledgement cannot replace its cache.
+
+Ten alternating Apple M4 comparisons used the same release executable,
+workspace, viewport, four-node path and 249.77–250.01 Hz input rate. Set
+`LAS_NATIVE_SYNC_BASELINE=1` with the native commit replay to disable the
+inline delta. Every after trace confirmed inline application, and
+persisted node positions matched in all ten pairs.
+
+| Interval | Polling p50 / p95 | Inline delta p50 / p95 |
+| --- | ---: | ---: |
+| Save acknowledgement to canonical frame displayed | 52.46 / 55.41 ms | 54.39 / 56.92 ms |
+| Pointer release to canonical frame displayed | 62.36 / 63.57 ms | 62.94 / 63.39 ms |
+
+For ten samples per build, nearest-rank p95 equals the maximum. The
+inline response removed the extra request from the critical path. A
+reduction in saved-to-visible latency was not observed on this display.
+
+### Committed-frame timing by stage
+
+The native commit replay records when the inline delta has been applied
+and when the canonical renderer starts. It preserves the Metal marker
+pair for that revision and the drawable's actual presentation time.
+The UI gives that native frame priority by submitting it before sending
+the WebView change notification. The fallback still wakes the sync loop.
+Use `LAS_NATIVE_RELEASE_NOTIFY_BASELINE=1` with the commit replay to
+measure the former order.
+
+Ten alternating pairs used the same Apple M4 release build, 2,000-node
+fixture, four-node drag and displayed viewport. One pair used polling
+fallback and was excluded. All nine accepted pairs applied the inline
+delta, had matching persisted endpoints, and ran at 249.75–249.94 Hz.
+Nearest-rank p95 is the maximum at this sample size.
+
+| Interval | Before p95 | Native submission first p95 |
+| --- | ---: | ---: |
+| Save confirmation to delta applied | 0.04 ms | 0.04 ms |
+| Delta applied to draw start | 3.48 ms | 3.31 ms |
+| Draw start to GPU bracket start | 8.11 ms | 7.78 ms |
+| GPU bracket | 3.91 ms | 3.59 ms |
+| GPU bracket end to display | 42.67 ms | 43.50 ms |
+| Save confirmation to display | 56.74 ms | 56.34 ms |
+
+The display wait was the dominant stage, with a median near 42 ms in both
+builds. Prioritizing native submission reduced the measured draw-start
+tail slightly. It did not demonstrate a repeatable reduction in display
+wait, and the end-to-end medians were 53.26 and 55.54 ms respectively.
+
+### Metal queue depth on pointer release
+
+The replay records which preview drawables are actually displayed between
+the committed frame's GPU-end marker and presentation. The summary also
+counts intervening CoreVideo refresh targets. With the default three-drawable
+Metal queue, two earlier previews presented in that interval. Removing the
+diagnostic-only forced preview before pointer-up left two earlier previews
+in eight of nine matched pairs. Its saved-to-visible p95 was 58.13 ms with
+the forced preview and 65.70 ms without it, so removing the forced draw
+alone did not solve the queueing delay. The replay now follows the live
+pointer-up sequence by default. Restore the old experiment with
+`LAS_NATIVE_RELEASE_EXTRA_PREVIEW_BASELINE=1`.
+
+Eight separate pairs compared queue depth with no forced preview in either
+arm. Both arms used the same Apple M4 release executable, 2,000 nodes, four
+moved nodes, identical positions and endpoints, and 249.78–249.93 Hz input.
+VSync stayed enabled; the tested display refreshed about every 16.67 ms.
+No pairs were excluded.
+
+| Interval or count | Three drawables | Two drawables |
+| --- | ---: | ---: |
+| Save acknowledgement to presentation p50 / p95 | 54.36 / 56.90 ms | 35.83 / 37.83 ms |
+| GPU end to presentation p50 / p95 | 41.99 / 42.60 ms | 24.17 / 25.10 ms |
+| Drawable acquisition, p95 | 3.57 ms | 0.04 ms |
+| Earlier previews and refreshes before committed presentation, every run | 2 | 1 |
+| Visible previews across all runs | 269 | 241 |
+
+Nearest-rank p95 is the maximum for eight observations. The one-refresh
+difference and actual preview presentation timestamps identify queueing in
+front of the committed frame on this host. The normal macOS workspace now
+requests the two-drawable configuration. For a diagnostic A/B, the trace
+defaults to the old three-drawable setting and
+`LAS_NATIVE_DRAG_SHALLOW_QUEUE=1` selects the new setting. Sustained input
+and other display configurations still merit tail-latency measurement.
+
+### Sustained drag queue analysis
+
+The native trace summarizer now groups previews by the number of earlier
+GPU-completed previews that Metal actually reported as presented between
+the current frame's GPU completion and presentation. Each group reports
+drawable acquisition, display wait and end-to-end latency jointly. Skipped
+drawables do not contribute to that count.
+
+Reanalysis of the eight matched queue-depth pairs above gives the following
+sustained-preview results. Latencies are medians of per-run p95s.
+
+| Metric | Three drawables | Two drawables |
+| --- | ---: | ---: |
+| Drawable acquisition | 10.64 ms | 10.89 ms |
+| GPU completion to presentation | 42.70 ms | 25.81 ms |
+| Input to presentation | 66.87 ms | 51.44 ms |
+| Visible previews across eight runs | 269 | 241 |
+
+At the end-to-end p95 frame, two preceding previews were presented in
+all eight three-drawable runs. With two drawables, seven runs had one
+preceding preview and one run had zero. The acquisition p95 remained close
+while post-GPU wait fell by roughly one display refresh. This characterizes
+the existing queue-depth change using saved real-window traces. Further
+scheduling changes still need a matched live comparison with visible
+preview throughput included.
+
+### Minimum interval between drag redraws
+
+Set `LAS_NATIVE_DRAG_INTERVAL_MS` (1–100 ms) to opt into minimum spacing
+between drag redraw starts. The native event loop keeps the most recent
+drag state and wakes at the deadline when it would otherwise sleep.
+Pointer release still follows the normal commit and redraw path. The replay
+uses the same cadence rule and checks it on each 250 Hz producer tick.
+
+On macOS, four alternating matched pairs per setting used the same
+release binary, 2 Drawable configuration, 2,000-node wide-fanout fixture,
+four selected nodes, path, viewport and 250 Hz replay. Recorded input
+rates ranged from 249.77 to 249.97 Hz. Each latency is the median of the
+per-run p95 values. Preview counts are totals. The two interval settings
+had separate baseline runs.
+
+| Metric | 12 ms baseline | 12 ms interval | 20 ms baseline | 20 ms interval |
+| --- | ---: | ---: | ---: | ---: |
+| Input to actual presentation | 50.52 ms | 49.44 ms | 51.68 ms | 46.14 ms |
+| Drawable acquisition | 11.26 ms | 10.15 ms | 11.09 ms | 4.30 ms |
+| GPU completion to actual presentation | 26.51 ms | 26.55 ms | 26.99 ms | 31.59 ms |
+| Visible previews | 128 | 110 | 111 | 74 |
+
+The 20 ms interval reduced acquisition wait and end-to-end tail latency,
+while increasing post-GPU wait and reducing visible previews by a third.
+The regular editor keeps its unpaced default. The A/B used synthetic
+native drag replay through real Metal presentation.
+
+### Overlap scene assembly with drawable acquisition
+
+The macOS preview can assemble its scene on a scoped CPU worker while the
+window thread acquires the drawable. The retained scene cache is borrowed
+exclusively. Texture acquisition, GPU encoding, presentation and the
+committed redraw stay on the window thread. Set
+`LAS_GPU_OVERLAP_DRAWABLE=1` to enable the experimental path. This path
+does not impose an interval between previews.
+
+Six alternating before/after pairs used one release build, two drawables,
+the same 2,000-node wide-fanout circuit, four selected nodes, viewport and
+250 Hz input path. Observed input rates were 249.52–249.97 Hz. Every run
+also completed the drag commit at r001. Latencies are medians of each
+run's p95. Counts are totals over six runs per arm.
+
+| Metric | Serial assembly and acquisition | Overlapped |
+| --- | ---: | ---: |
+| Input to actual presentation | 51.60 ms | 50.42 ms |
+| Drawable acquisition | 6.41 ms | 14.13 ms |
+| GPU completion to actual presentation | 25.30 ms | 25.46 ms |
+| Visible previews | 176 | 176 |
+
+The wall time reported for acquisition rises because it starts earlier
+and includes time that now overlaps scene work. End-to-end p95 improved
+in three pairs and regressed in three. This difference does not justify
+enabling the path by default. An 8 ms interval comparison also preserved
+the visible count (119 each) but raised end-to-end p95 from 50.03 to
+50.55 ms. Preparing buffers before acquisition raised p95 from 50.04 to
+50.53 ms with visible counts of 125 and 128. Those trials used four
+matched pairs per setting.

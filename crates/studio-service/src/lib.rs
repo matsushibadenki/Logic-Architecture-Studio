@@ -3,6 +3,7 @@ mod jobs;
 pub mod mcp;
 pub mod native_sync;
 mod persistence;
+mod proposal_checks;
 pub mod recovery;
 mod routes;
 mod rtl_stimuli;
@@ -107,10 +108,20 @@ impl Service {
         })
     }
     pub fn execute(&self, mut req: Request) -> Result<Value, String> {
+        if req.method == "design.check_proposal" {
+            return proposal_checks::compare(self, req.args);
+        }
         if req.method == "view.routes" {
             return routes::execute(self, req.args);
         }
         let compact = req.method == "view.command";
+        let native_base = (compact && req.actor == "native")
+            .then(|| req.args["native_cursor"].as_str().map(str::to_owned))
+            .flatten();
+        let expected_testbench_version = req.args.get("expected_testbench_version")
+            .filter(|_| compact && req.args["method"] == "design.apply_patch")
+            .map(|value| value.as_u64().ok_or("Invalid stimulus table version"))
+            .transpose()?;
         if compact {
             let method = req.args["method"]
                 .as_str()
@@ -236,6 +247,9 @@ impl Service {
             return synthesis(&self.root, revision, &source, &name);
         }
         let mut state = self.state.lock().map_err(|e| e.to_string())?;
+        if expected_testbench_version.is_some_and(|version| version != state.testbench.version) {
+            return Err("The stimulus table changed. Run exploration again.".into());
+        }
         if req.method.starts_with("simulation.") {
             return self.simulation.lock().map_err(|e| e.to_string())?.execute(
                 &state,
@@ -299,7 +313,7 @@ impl Service {
         }
         // Transactional clone: failed validation or disk writes never change the live document.
         let mut next = state.clone();
-        let result = if compact {
+        let mut result = if compact {
             next.dispatch_view(&req.method, req.args.clone(), &req.actor)?
         } else {
             next.dispatch(&req.method, req.args.clone(), &req.actor)?
@@ -328,7 +342,22 @@ impl Service {
                 &req.actor,
             )?;
             *state = next;
-            self.sync.lock().map_err(|e| e.to_string())?.publish(delta);
+            let mut journal = self.sync.lock().map_err(|e| e.to_string())?;
+            let native_delta = native_base
+                .as_deref()
+                .filter(|base| {
+                    req.method == "design.apply_patch"
+                        && design_core::is_position_patch(&req.args)
+                        && journal.cursor() == *base
+                })
+                .map(|_| native_sync::filter(&delta));
+            journal.publish(delta);
+            if let Some(delta) = native_delta {
+                result["native_sync"] = json!({
+                    "cursor": journal.cursor(), "base": native_base,
+                    "changed": true, "kind": "delta", "deltas": [delta],
+                });
+            }
         }
         Ok(result)
     }
@@ -811,6 +840,56 @@ mod tests {
         drop(reopened);
         fs::remove_dir_all(root).unwrap();
     }
+    #[test]
+    fn native_move_acknowledges_current_base_and_falls_back_for_stale_base() {
+        let root = std::env::temp_dir().join(format!("las-native-ack-{}", std::process::id()));
+        let service = Service::open(&root).unwrap();
+        let request = |method: &str, args| Request {
+            method: method.into(),
+            args,
+            actor: "native".into(),
+        };
+        let snapshot = service
+            .execute(request("project.sync", json!({"scope":"native_delta"})))
+            .unwrap();
+        let base = native_sync::apply(None, &snapshot).unwrap();
+        let move_at = |revision, x| {
+            service.execute(request("view.command", json!({
+            "method":"design.apply_patch", "native_cursor":base.cursor,
+            "args":{"expected_revision":revision,"label":"move","operations":[{"op":"update_node","id":"add","x":x}]}
+        }))).unwrap()
+        };
+        let ack = move_at(0, 777);
+        let applied = native_sync::apply(Some(&base), &ack["native_sync"]).unwrap();
+        assert_eq!(applied.document.node("add").unwrap().x, 777.);
+        assert_eq!(applied.meta["revision"], 1);
+        let sync = service
+            .execute(request(
+                "project.sync",
+                json!({"scope":"native_delta","cursor":base.cursor}),
+            ))
+            .unwrap();
+        assert_eq!(sync, ack["native_sync"]);
+        let stale = move_at(1, 778);
+        assert!(stale.get("native_sync").is_none());
+        assert_eq!(stale["revision"], 2);
+        drop(service);
+        let reopened = Service::open(&root).unwrap();
+        assert_eq!(
+            reopened
+                .state
+                .lock()
+                .unwrap()
+                .document
+                .node("add")
+                .unwrap()
+                .x,
+            778.
+        );
+        drop(reopened);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn failed_move_log_write_does_not_publish_state_or_cursor() {
         let root = std::env::temp_dir().join(format!("las-wal-fail-{}", std::process::id()));

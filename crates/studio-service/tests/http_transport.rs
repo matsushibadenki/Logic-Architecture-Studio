@@ -74,18 +74,18 @@ fn http_enforces_authentication_session_ownership_and_rate_limits() {
             "clientInfo":{"name":"http-test","version":"1"}}
     })
     .to_string();
-    let request = |path: &str, host: &str, extra: &str| {
+    let request = |path: &str, host: &str, extra: &str, payload: &str| {
         let mut client = TcpStream::connect(address).unwrap();
         client
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
-        write!(client, "POST {path} HTTP/1.1\r\nHost: {host}\r\nAccept: application/json, text/event-stream\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{extra}\r\n{body}", body.len()).unwrap();
+        write!(client, "POST {path} HTTP/1.1\r\nHost: {host}\r\nAccept: application/json, text/event-stream\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{extra}\r\n{payload}", payload.len()).unwrap();
         let mut response = String::new();
         client.read_to_string(&mut response).unwrap();
         response
     };
     let status = |path: &str, host: &str, extra: &str| {
-        let response = request(path, host, extra);
+        let response = request(path, host, extra, &body);
         response
             .split_whitespace()
             .nth(1)
@@ -105,6 +105,7 @@ fn http_enforces_authentication_session_ownership_and_rate_limits() {
     assert_eq!(status("/elsewhere", &address.to_string(), ""), 404);
     // Native clients such as Inspector do not need to send Origin.
     assert_eq!(status("/mcp", &address.to_string(), ""), 401);
+    assert_eq!(status("/mcp/portable", &address.to_string(), ""), 401);
     assert_eq!(
         status(
             "/mcp",
@@ -114,7 +115,7 @@ fn http_enforces_authentication_session_ownership_and_rate_limits() {
         401
     );
     let bearer = format!("Authorization: Bearer {token}\r\n");
-    let response = request("/mcp", &address.to_string(), &bearer);
+    let response = request("/mcp", &address.to_string(), &bearer, &body);
     assert!(response.starts_with("HTTP/1.1 200"));
     let session = response
         .lines()
@@ -125,15 +126,41 @@ fn http_enforces_authentication_session_ownership_and_rate_limits() {
     for _ in 0..5 {
         assert_eq!(status("/mcp", &address.to_string(), &bearer), 200);
     }
-    let response = request("/mcp", &address.to_string(), &bearer);
+    let response = request("/mcp", &address.to_string(), &bearer, &body);
     assert!(response.starts_with("HTTP/1.1 429"));
     assert!(response.lines().any(|line| line == "retry-after: 60"));
-    assert_eq!(
-        status(
-            "/mcp",
-            &address.to_string(),
-            &format!("Authorization: Bearer {other}\r\n")
-        ),
-        200
+    let portable = "/mcp/portable";
+    let address = address.to_string();
+    let other_bearer = format!("Authorization: Bearer {other}\r\n");
+    let response = request(portable, &address, &other_bearer, &body);
+    assert!(response.starts_with("HTTP/1.1 200"));
+    let session = response
+        .lines()
+        .find_map(|line| line.strip_prefix("mcp-session-id: "))
+        .expect("portable session");
+    let headers = format!("{other_bearer}Mcp-Session-Id: {session}\r\n");
+    request(
+        portable,
+        &address,
+        &headers,
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+    );
+    let tools = request(
+        portable,
+        &address,
+        &headers,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+    );
+    assert!(tools.contains(r#""name":"sample_list_objects""#));
+    assert!(!tools.contains(r#""name":"sample.list_objects""#));
+    let result = request(
+        portable,
+        &address,
+        &headers,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"sample_list_objects","arguments":{}}}"#,
+    );
+    assert!(
+        result.contains(r#""structuredContent":{"result""#),
+        "{result}"
     );
 }

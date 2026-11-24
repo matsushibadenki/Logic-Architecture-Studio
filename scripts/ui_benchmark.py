@@ -102,6 +102,32 @@ def summarize_native_drag(paths):
                 display_ms=(displayed - release["released_at"]) * 1000,
                 save_to_display_ms=(displayed - release["saved_at"]) * 1000,
             )
+            applied = release.get("delta_applied_at")
+            if applied is not None:
+                started = trace.get("release_draw_start_at")
+                gpu = next((mark for mark in trace.get("release_stages", [])
+                            if mark["stage"] == "gpu"), None)
+                if (started is None or gpu is None or not release["saved_at"] <= applied
+                        <= started <= gpu["start_at"] <= gpu["end_at"] <= displayed):
+                    raise SystemExit(f"Invalid committed frame stage timings: {path}")
+                result["release"]["stages"] = dict(
+                    apply_ms=(applied - release["saved_at"]) * 1000,
+                    draw_wait_ms=(started - applied) * 1000,
+                    render_preparation_ms=(gpu["start_at"] - started) * 1000,
+                    gpu_ms=(gpu["end_at"] - gpu["start_at"]) * 1000,
+                    display_wait_ms=(displayed - gpu["end_at"]) * 1000,
+                )
+                targets = sorted({tick["target_at"] for tick in trace.get("refresh", [])})
+                if targets and targets[0] <= gpu["end_at"] <= displayed <= targets[-1]:
+                    first = bisect.bisect_left(targets, gpu["end_at"])
+                    result["release"]["refreshes_before_display"] = max(
+                        0, bisect.bisect_left(targets, displayed - .001) - first)
+                if "release_queue" in trace:
+                    preceding = [frame for frame in trace["release_queue"]
+                                 if gpu["end_at"] <= frame["presented_at"] < displayed]
+                    result["release"]["previews_displayed_after_gpu"] = len(preceding)
+                    result["release"]["forced_preview_displayed_after_gpu"] = any(
+                        frame["forced_final_preview"] for frame in preceding)
         if "stages" in trace:
             marks = {(mark["input"], mark["stage"]): mark for mark in trace["stages"]}
             breakdown = []
@@ -130,8 +156,18 @@ def summarize_native_drag(paths):
                     display_wait_ms=(frame["presented_at"] - gpu["end_at"]) * 1000,
                     total_ms=(frame["presented_at"] - times[index]) * 1000,
                 ))
+                # Count only earlier GPU-completed previews whose presentation
+                # Metal actually reported. Skipped drawables have no display time.
+                gpu_end = gpu["end_at"]
+                preceding = sum(
+                    other["input"] < index
+                    and (previous_gpu := marks.get((other["input"], "gpu"))) is not None
+                    and previous_gpu["end_at"] <= gpu_end
+                    and gpu_end < other["presented_at"] < frame["presented_at"]
+                    for other in shown
+                )
+                breakdown[-1]["preceding_presentations_after_gpu"] = preceding
                 if len(ticks) >= 2:
-                    gpu_end = gpu["end_at"]
                     shown_at = frame["presented_at"]
                     first = bisect.bisect_left(ticks, gpu_end)
                     if 0 < first < len(ticks) and shown_at <= ticks[-1]:
@@ -143,8 +179,18 @@ def summarize_native_drag(paths):
                             extra_refreshes=max(0, count),
                         )
             result["frame_latency"] = trace["frame_latency"]
+            result["min_draw_interval_ms"] = trace.get("min_draw_interval_ms")
             result["stages"] = {key: stats([row[key] for row in breakdown if key in row])
                                 for key in sorted(set().union(*breakdown))}
+            result["by_preceding_presentations_after_gpu"] = {}
+            for count in sorted({row["preceding_presentations_after_gpu"] for row in breakdown}):
+                group = [row for row in breakdown if row["preceding_presentations_after_gpu"] == count]
+                result["by_preceding_presentations_after_gpu"][count] = dict(
+                    frames=len(group),
+                    acquire_ms=stats([row["acquire_ms"] for row in group]),
+                    display_wait_ms=stats([row["display_wait_ms"] for row in group]),
+                    total_ms=stats([row["total_ms"] for row in group]),
+                )
             ranked = sorted(breakdown, key=lambda row: row["total_ms"])
             result["p95_frame_breakdown"] = ranked[math.ceil(len(ranked) * .95) - 1]
         results.append(result)

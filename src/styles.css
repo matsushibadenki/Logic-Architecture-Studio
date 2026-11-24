@@ -2262,6 +2262,7 @@ html.toolbar-document,
   width: 100%;
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 10px;
   padding: 10px 12px;
   border-radius: 7px;
@@ -2903,4 +2904,39 @@ html.toolbar-document,
 .snippet-row .module-item {
   flex: 1;
   min-width: 0;
+}
+
+.model-fields,
+.model-fields label,
+.model-preview {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.model-fields {
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.model-fields input,
+.model-fields select,
+.model-fields textarea {
+  width: 100%;
+  padding: 7px 10px;
+}
+.model-fields textarea {
+  resize: vertical;
+  font: inherit;
+  color: var(--color-ink);
+  background: var(--color-paper);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-sm);
+}
+.model-fields button,
+.model-preview button {
+  justify-self: start;
+}
+.model-preview {
+  margin-top: 16px;
 }

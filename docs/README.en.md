@@ -1,5 +1,7 @@
 # Logic Architecture Studio
 
+Use [Design AI](MODELS.md) for model-generated circuit proposals or connect Codex and Google Antigravity through [MCP](MCP.md#codex-and-google-antigravity).
+
 A working Tauri 2 / Rust EDA foundation with a shared command service for the GUI and a stdio MCP bridge. UI languages: English, Japanese, Simplified Chinese.
 
 Run `npm ci`, then `npm run desktop`. For browser development, run `npm run core` and `npm run dev` in separate terminals. Use `LAS_WORKSPACE` to select the directory. macOS is the current development target; IPC uses Unix sockets.

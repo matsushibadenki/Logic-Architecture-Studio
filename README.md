@@ -4,7 +4,7 @@
 
 Tauri 2 + Rustで実装した、回路編集とMCP操作を同じ設計コアで扱うEDAワークベンチの初期実装です。UNGEのノード表現とネイティブGPUレンダラーを取り込んでいます。
 
-[English](docs/README.en.md) · [简体中文](docs/README.zh-CN.md) · [実装状況](ROADMAP.md) · [アーキテクチャ](docs/ARCHITECTURE.md) · [MCP](docs/MCP.md)
+[English](docs/README.en.md) · [简体中文](docs/README.zh-CN.md) · [実装状況](ROADMAP.md) · [アーキテクチャ](docs/ARCHITECTURE.md) · [MCP](docs/MCP.md) · [設計AI](docs/MODELS.md)
 
 ## 起動
 
