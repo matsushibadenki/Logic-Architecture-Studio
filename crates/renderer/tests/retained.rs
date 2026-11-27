@@ -188,7 +188,7 @@ fn feedback_lanes_match_during_drag_commit_and_rebuild() {
                 x: n.x + 24.,
                 y: n.y + 24.,
                 width: design_core::NODE_WIDTH,
-                height: design_core::node_height(&n.kind),
+                height: n.height(),
             },
         );
         let during = cache

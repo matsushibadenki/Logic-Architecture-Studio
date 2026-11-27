@@ -218,16 +218,28 @@ impl Kind {
     }
 }
 pub const NODE_WIDTH: f32 = 288.;
-/// Square by default. Leave room for the header, footer and each port row.
+
+pub(crate) fn valid_coordinate(value: f32) -> bool {
+    value.abs() <= 100_000.
+}
+fn height_for_rows(rows: usize) -> f32 {
+    NODE_WIDTH.max((rows + 1) as f32 * 64.)
+}
+/// Default height for a primitive without an instance-specific interface.
 pub fn node_height(kind: &Kind) -> f32 {
-    NODE_WIDTH.max((kind.input_names().len().max(1) + 1) as f32 * 64.)
+    height_for_rows(kind.input_names().len())
 }
 fn is_false(value: &bool) -> bool {
     !value
 }
 impl Node {
     pub fn height(&self) -> f32 {
-        NODE_WIDTH.max((self.inputs().len().max(self.outputs().len()).max(1) + 1) as f32 * 64.)
+        match &self.config {
+            NodeConfig::Module {
+                inputs, outputs, ..
+            } => height_for_rows(inputs.len().max(outputs.len())),
+            _ => node_height(&self.kind),
+        }
     }
     pub fn outputs(&self) -> Vec<(&str, u8, bool)> {
         match &self.config {
@@ -554,7 +566,7 @@ impl Document {
                 (_, NodeConfig::None) => {}
                 _ => return Err("Configuration does not match node kind".into()),
             }
-            if !n.x.is_finite() || !n.y.is_finite() || n.x.abs() > 100000. || n.y.abs() > 100000. {
+            if !valid_coordinate(n.x) || !valid_coordinate(n.y) {
                 return Err("Invalid coordinates".into());
             }
         }
@@ -591,7 +603,7 @@ impl Document {
                     source.name, target.name, e.port
                 ));
             }
-            if !destinations.insert((&e.to, &e.port)) {
+            if !destinations.insert((e.to.as_str(), e.port.as_str())) {
                 return Err("An input can have only one driver".into());
             }
         }
@@ -603,7 +615,7 @@ impl Document {
         if complete {
             for n in &self.nodes {
                 for (port, _) in n.inputs() {
-                    if !self.edges.iter().any(|e| e.to == n.id && e.port == port) {
+                    if !destinations.contains(&(n.id.as_str(), port)) {
                         return Err(format!("Unconnected input: {}.{port}", n.name));
                     }
                 }
@@ -615,10 +627,11 @@ impl Document {
         Ok(())
     }
     pub fn diagnostics(&self) -> Vec<Diagnostic> {
+        let drivers = self.drivers();
         let mut result = vec![];
         for n in &self.nodes {
             for (port, _) in n.inputs() {
-                if !self.edges.iter().any(|e| e.to == n.id && e.port == port) {
+                if !drivers.contains_key(&(n.id.as_str(), port)) {
                     result.push(Diagnostic {
                         code: "unconnected_input".into(),
                         node: Some(n.id.clone()),
@@ -628,204 +641,6 @@ impl Document {
             }
         }
         result
-    }
-    pub fn order(&self) -> Result<Vec<String>, String> {
-        let mut degree: BTreeMap<String, usize> =
-            self.nodes.iter().map(|n| (n.id.clone(), 0)).collect();
-        for e in &self.edges {
-            if matches!(self.node(&e.to)?.kind, Kind::Register | Kind::Module) {
-                continue;
-            }
-            *degree.get_mut(&e.to).ok_or("Unknown target")? += 1;
-        }
-        let mut ready: Vec<String> = degree
-            .iter()
-            .filter(|(_, d)| **d == 0)
-            .map(|(id, _)| id.clone())
-            .collect();
-        let mut order = vec![];
-        while let Some(id) = ready.pop() {
-            for e in self.edges.iter().filter(|e| e.from == id) {
-                if matches!(self.node(&e.to)?.kind, Kind::Register | Kind::Module) {
-                    continue;
-                }
-                let d = degree.get_mut(&e.to).unwrap();
-                *d -= 1;
-                if *d == 0 {
-                    ready.push(e.to.clone());
-                }
-            }
-            order.push(id);
-        }
-        if order.len() != self.nodes.len() {
-            Err("Combinational cycle detected".into())
-        } else {
-            Ok(order)
-        }
-    }
-    pub fn evaluate(
-        &self,
-        inputs: &BTreeMap<String, u64>,
-    ) -> Result<BTreeMap<String, u64>, String> {
-        if self.has_modules() {
-            return self.flatten()?.evaluate(inputs);
-        }
-        self.require_combinational()?;
-        self.validate(true)?;
-        Ok(self.outputs(&self.evaluate_values(inputs, &BTreeMap::new(), &self.order()?)?))
-    }
-    pub fn require_combinational(&self) -> Result<(), String> {
-        if self.has_modules() {
-            return self.flatten()?.require_combinational();
-        }
-        if self.nodes.iter().any(|node| node.kind == Kind::Register) {
-            return Err("Sequential circuit requires cycle simulation".into());
-        }
-        Ok(())
-    }
-    pub fn evaluate_signals(
-        &self,
-        inputs: &BTreeMap<String, u64>,
-    ) -> Result<BTreeMap<String, u64>, String> {
-        if self.has_modules() {
-            return self.flatten()?.evaluate_signals(inputs);
-        }
-        self.require_combinational()?;
-        self.validate(true)?;
-        self.evaluate_values(inputs, &BTreeMap::new(), &self.order()?)
-    }
-    fn evaluate_values(
-        &self,
-        inputs: &BTreeMap<String, u64>,
-        registers: &BTreeMap<String, u64>,
-        order: &[String],
-    ) -> Result<BTreeMap<String, u64>, String> {
-        let drivers: BTreeMap<_, _> = self
-            .edges
-            .iter()
-            .map(|edge| ((edge.to.as_str(), edge.port.as_str()), &edge.from))
-            .collect();
-        let mut values: BTreeMap<String, u64> = BTreeMap::new();
-        for id in order {
-            let n = self.node(id)?;
-            let get = |port: &str| values[drivers[&(id.as_str(), port)]];
-            let value = match n.kind {
-                Kind::Module => return Err("Unelaborated module".into()),
-                Kind::Input => {
-                    let value = *inputs
-                        .get(&n.name)
-                        .ok_or_else(|| format!("Missing input: {}", n.name))?;
-                    if value > mask(n.width) {
-                        return Err(format!("Input {} exceeds unsigned {}-bit range; use an explicit width conversion", n.name, n.width));
-                    }
-                    value
-                }
-                Kind::Constant => match &n.config {
-                    NodeConfig::Constant { value } => n.parse_value(value)?,
-                    _ => unreachable!(),
-                },
-                Kind::Slice => match n.config {
-                    NodeConfig::Slice { lsb, .. } => get("a") >> lsb,
-                    _ => unreachable!(),
-                },
-                Kind::Concat => match n.config {
-                    NodeConfig::Concat { low_width, .. } => (get("hi") << low_width) | get("lo"),
-                    _ => unreachable!(),
-                },
-                Kind::ZeroExtend => get("a"),
-                Kind::SignExtend => match n.config {
-                    NodeConfig::SignExtend { input_width } => {
-                        let value = get("a");
-                        if value & (1u64 << (input_width - 1)) != 0 {
-                            value | (mask(n.width) ^ mask(input_width))
-                        } else {
-                            value
-                        }
-                    }
-                    _ => unreachable!(),
-                },
-                Kind::Register => registers[id],
-                Kind::Output => get("a"),
-                Kind::Add => get("a").wrapping_add(get("b")),
-                Kind::Sub => get("a").wrapping_sub(get("b")),
-                Kind::And => get("a") & get("b"),
-                Kind::Nand => !(get("a") & get("b")),
-                Kind::Nor => !(get("a") | get("b")),
-                Kind::Xnor => !(get("a") ^ get("b")),
-                Kind::Or => get("a") | get("b"),
-                Kind::Xor => get("a") ^ get("b"),
-                Kind::Not => !get("a"),
-                Kind::Mux => match get("sel") {
-                    0 => get("d0"),
-                    1 => get("d1"),
-                    _ => get("d2"),
-                },
-            };
-            values.insert(id.clone(), value & mask(n.width));
-        }
-        Ok(values)
-    }
-    fn outputs(&self, values: &BTreeMap<String, u64>) -> BTreeMap<String, u64> {
-        self.nodes
-            .iter()
-            .filter(|n| n.kind == Kind::Output)
-            .map(|n| (n.name.clone(), values[&n.id]))
-            .collect()
-    }
-    pub fn simulate_cycles(&self, cycles: &[CycleInput]) -> Result<Vec<CycleSample>, String> {
-        if self.has_modules() {
-            return self.flatten()?.simulate_cycles(cycles);
-        }
-        self.validate(true)?;
-        if cycles.len().saturating_mul(self.nodes.len()) > 524_288 {
-            return Err("Trace exceeds 524288 node samples; use fewer cycles".into());
-        }
-        if cycles.is_empty() || cycles.len() > 256 || !cycles[0].reset {
-            return Err("Supply 1–256 cycles, starting with reset".into());
-        }
-        let order = self.order()?;
-        let register_inputs = self
-            .edges
-            .iter()
-            .filter(|edge| {
-                self.node(&edge.to)
-                    .is_ok_and(|node| node.kind == Kind::Register)
-            })
-            .collect::<Vec<_>>();
-        if register_inputs.is_empty() {
-            return Err("Cycle simulation requires a register".into());
-        }
-        let mut registers = register_inputs
-            .iter()
-            .map(|edge| (edge.to.clone(), 0))
-            .collect();
-        let mut samples = Vec::with_capacity(cycles.len());
-        for cycle in cycles {
-            let inputs = self.parse_signals(&cycle.inputs, Kind::Input)?;
-            let before = self.evaluate_values(&inputs, &registers, &order)?;
-            registers = register_inputs
-                .iter()
-                .map(|edge| {
-                    (
-                        edge.to.clone(),
-                        if cycle.reset { 0 } else { before[&edge.from] },
-                    )
-                })
-                .collect();
-            let after = self.evaluate_values(&inputs, &registers, &order)?;
-            samples.push(CycleSample {
-                values: after.clone(),
-                reset: cycle.reset,
-                outputs: self.format_outputs(&self.outputs(&after)),
-                registers: self
-                    .nodes
-                    .iter()
-                    .filter(|node| node.kind == Kind::Register)
-                    .map(|node| (node.name.clone(), node.decimal(registers[&node.id])))
-                    .collect(),
-            });
-        }
-        Ok(samples)
     }
     pub fn rtl(&self) -> Result<String, String> {
         self.validate(true)?;
@@ -900,19 +715,13 @@ impl Document {
                 );
             }
         }
+        let drivers = self.drivers();
         for id in self.order()? {
             let n = self.node(&id)?;
             if n.kind == Kind::Input {
                 continue;
             }
-            let get = |port: &str| {
-                let edge = self
-                    .edges
-                    .iter()
-                    .find(|e| e.to == id && e.port == port)
-                    .unwrap();
-                source_signal(edge)
-            };
+            let get = |port: &str| source_signal(drivers[&(id.as_str(), port)]);
             if let NodeConfig::Module {
                 definition,
                 inputs,

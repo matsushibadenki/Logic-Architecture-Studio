@@ -22,7 +22,28 @@ struct Trace {
     external: Option<Value>,
     external_vcd: Option<String>,
 }
+fn simulation_document(workspace: &Workspace) -> Result<Arc<Document>, String> {
+    if workspace.document.has_modules() {
+        Ok(Arc::new(workspace.document.flatten()?))
+    } else {
+        Ok(workspace.document.clone())
+    }
+}
+
 impl Session {
+    fn next_trace_id(&mut self) -> String {
+        self.generation += 1;
+        format!(
+            "{}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos(),
+            self.generation
+        )
+    }
+
     pub(crate) fn version(&self) -> u64 {
         self.version
     }
@@ -31,22 +52,9 @@ impl Session {
         workspace: &Workspace,
         run: crate::rtl_stimuli::Run,
     ) -> Result<(), String> {
-        let document = if workspace.document.has_modules() {
-            Arc::new(workspace.document.flatten()?)
-        } else {
-            workspace.document.clone()
-        };
-        self.generation += 1;
+        let document = simulation_document(workspace)?;
+        let id = self.next_trace_id();
         self.version += 1;
-        let id = format!(
-            "{}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos(),
-            self.generation
-        );
         let radix = self.trace.as_ref().map_or(10, |t| t.radix);
         self.trace = Some(Trace {
             id,
@@ -70,21 +78,6 @@ impl Session {
         method: &str,
         args: &Value,
     ) -> Result<Value, String> {
-        let elaborated;
-        let workspace = if workspace.document.has_modules()
-            && matches!(
-                method,
-                "simulation.cycles" | "simulation.evaluate" | "simulation.testbench"
-            ) {
-            elaborated = {
-                let mut w = workspace.clone();
-                w.document = Arc::new(w.document.flatten()?);
-                w
-            };
-            &elaborated
-        } else {
-            workspace
-        };
         match method {
             "simulation.cycles" | "simulation.evaluate" | "simulation.testbench" => {
                 if method != "simulation.evaluate"
@@ -92,46 +85,30 @@ impl Session {
                 {
                     return Err("Revision conflict".into());
                 }
+                let document = simulation_document(workspace)?;
                 let mut checks = None;
                 let mut testbench_version = None;
                 let (cycles, samples) = if method == "simulation.testbench" {
                     if args["expected_version"].as_u64() != Some(workspace.testbench.version) {
                         return Err("Stimulus table changed; reload before running".into());
                     }
-                    let (cycles, samples, report) = workspace.testbench.run(&workspace.document)?;
+                    let (cycles, samples, report) = workspace.testbench.run(&document)?;
                     checks = Some(report);
                     testbench_version = Some(workspace.testbench.version);
                     (cycles, samples)
                 } else if method == "simulation.cycles" {
                     let cycles: Vec<CycleInput> = serde_json::from_value(args["cycles"].clone())
                         .map_err(|e| e.to_string())?;
-                    let samples = workspace.document.simulate_cycles(&cycles)?;
+                    let samples = document.simulate_cycles(&cycles)?;
                     (cycles, samples)
                 } else {
-                    let strings: BTreeMap<String, String> =
-                        serde_json::from_value(args["inputs"].clone())
-                            .map_err(|e| e.to_string())?;
-                    let inputs = workspace.document.parse_signals(&strings, Kind::Input)?;
-                    let values = workspace.document.evaluate_signals(&inputs)?;
-                    let outputs = workspace
-                        .document
-                        .nodes
-                        .iter()
-                        .filter(|n| n.kind == Kind::Output)
-                        .map(|n| (n.name.clone(), n.decimal(values[&n.id])))
-                        .collect();
-                    (
-                        vec![CycleInput {
-                            reset: false,
-                            inputs: strings,
-                        }],
-                        vec![CycleSample {
-                            reset: false,
-                            values,
-                            outputs,
-                            registers: BTreeMap::new(),
-                        }],
-                    )
+                    let cycle = CycleInput {
+                        reset: false,
+                        inputs: serde_json::from_value(args["inputs"].clone())
+                            .map_err(|e| e.to_string())?,
+                    };
+                    let sample = document.combinational_sample(&cycle)?;
+                    (vec![cycle], vec![sample])
                 };
                 let trace_bytes = serde_json::to_vec(&(&cycles, &samples))
                     .map_err(|e| e.to_string())?
@@ -139,22 +116,12 @@ impl Session {
                 if trace_bytes > 4 * 1024 * 1024 {
                     return Err("Trace exceeds 4 MiB; use fewer cycles".into());
                 }
-                self.generation += 1;
-                // Include the service instance so an obsolete client cannot select a replacement trace.
-                let id = format!(
-                    "{}-{}-{}",
-                    std::process::id(),
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_nanos(),
-                    self.generation
-                );
+                let id = self.next_trace_id();
                 let radix = self.trace.as_ref().map_or(10, |t| t.radix);
                 self.trace = Some(Trace {
                     id,
                     revision: workspace.revision,
-                    document: workspace.document.clone(),
+                    document,
                     selected: samples.len() - 1,
                     samples,
                     cycles,
@@ -168,14 +135,7 @@ impl Session {
             }
             "simulation.select" => {
                 let trace = self.trace.as_mut().ok_or("No simulation trace")?;
-                if args["expected_revision"].as_u64() != Some(workspace.revision)
-                    || trace.revision != workspace.revision
-                {
-                    return Err("Revision conflict; rerun simulation".into());
-                }
-                if args["trace_id"].as_str() != Some(&trace.id) {
-                    return Err("Simulation trace replaced".into());
-                }
+                trace.check_request(workspace.revision, args)?;
                 let index = args["index"].as_u64().ok_or("Missing sample index")? as usize;
                 let radix = args["radix"].as_u64().ok_or("Missing radix")? as u32;
                 if index >= trace.samples.len() || ![10, 16].contains(&radix) {
@@ -187,14 +147,7 @@ impl Session {
             }
             "simulation.vcd" => {
                 let trace = self.trace.as_ref().ok_or("No simulation trace")?;
-                if args["expected_revision"].as_u64() != Some(workspace.revision)
-                    || trace.revision != workspace.revision
-                {
-                    return Err("Revision conflict; rerun simulation".into());
-                }
-                if args["trace_id"].as_str() != Some(&trace.id) {
-                    return Err("Simulation trace replaced".into());
-                }
+                trace.check_request(workspace.revision, args)?;
                 let source = trace.external_vcd.clone().unwrap_or_else(|| trace.vcd());
                 if source.len() > 12 * 1024 * 1024 {
                     return Err("VCD exceeds 12 MiB; use fewer cycles".into());
@@ -216,13 +169,9 @@ impl Session {
             return Ok(json!({"changed":false,"cursor":cursor}));
         }
         let session = self.trace.as_ref().map(|trace| {
-            let sample = &trace.samples[trace.selected];
-            let format = |v: u64, width: u8| if trace.radix == 16 { format!("0x{:0width$X}", v, width = usize::from(width).div_ceil(4)) } else { v.to_string() };
-            let values = trace.document.nodes.iter().map(|n| (n.id.clone(), if n.signed && trace.radix == 10 { design_core::signed_value(sample.values[&n.id], n.width).to_string() } else { format(sample.values[&n.id], n.width) })).collect::<BTreeMap<_, _>>();
-            let register_d = trace.document.edges.iter().filter(|e| trace.document.node(&e.to).is_ok_and(|n| n.kind == Kind::Register)).map(|e| (e.to.clone(), { let n=trace.document.node(&e.to).unwrap(); if trace.radix == 10 { n.decimal(sample.values[&e.from]) } else { format(sample.values[&e.from], n.width) } })).collect::<BTreeMap<_, _>>();
             json!({"id":trace.id,"revision":trace.revision,"cycles":trace.cycles,"samples":trace.samples,"selected":trace.selected,"radix":trace.radix,"checks":trace.checks,"external":trace.external,"testbench_version":trace.testbench_version,
                 "signals": trace.document.nodes.iter().filter(|n| matches!(n.kind, Kind::Input | Kind::Output | Kind::Register)).map(|n| json!({"id":n.id,"name":n.name,"kind":n.kind,"width":n.width,"signed":n.signed})).collect::<Vec<_>>(),
-                "annotation": if trace.revision == workspace.revision { json!({"version":self.version,"revision":trace.revision,"values":values,"register_d":register_d}) } else { Value::Null }})
+                "annotation": if trace.revision == workspace.revision { trace.annotation(self.version) } else { Value::Null }})
         });
         // Keep the existing GUI/MCP evaluation response fields compatible.
         let trace = self.trace.as_ref();
@@ -235,6 +184,48 @@ impl Session {
 }
 
 impl Trace {
+    fn annotation(&self, version: u64) -> Value {
+        let sample = &self.samples[self.selected];
+        let format = |node: &design_core::Node, bits| {
+            if self.radix == 16 {
+                format!(
+                    "0x{bits:0width$X}",
+                    width = usize::from(node.width).div_ceil(4)
+                )
+            } else {
+                node.decimal(bits)
+            }
+        };
+        let values: BTreeMap<_, _> = self
+            .document
+            .nodes
+            .iter()
+            .map(|node| (&node.id, format(node, sample.values[&node.id])))
+            .collect();
+        let mut register_d = BTreeMap::new();
+        for edge in &self.document.edges {
+            let target = self
+                .document
+                .nodes
+                .by_id(&edge.to)
+                .expect("validated trace target");
+            if target.kind == Kind::Register {
+                register_d.insert(&edge.to, format(target, sample.values[&edge.from]));
+            }
+        }
+        json!({"version":version,"revision":self.revision,"values":values,"register_d":register_d})
+    }
+
+    fn check_request(&self, revision: u64, args: &Value) -> Result<(), String> {
+        if args["expected_revision"].as_u64() != Some(revision) || self.revision != revision {
+            return Err("Revision conflict; rerun simulation".into());
+        }
+        if args["trace_id"].as_str() != Some(&self.id) {
+            return Err("Simulation trace replaced".into());
+        }
+        Ok(())
+    }
+
     fn vcd(&self) -> String {
         use std::fmt::Write;
         let mut out = String::from("$version Logic Architecture Studio $end\n$comment Rust two-state bit-vector samples after each rising edge. 1 ns per sample is synthetic; no propagation or pre-reset state is modeled. $end\n$timescale 1 ns $end\n$scope module logic $end\n$var wire 1 rst reset $end\n");

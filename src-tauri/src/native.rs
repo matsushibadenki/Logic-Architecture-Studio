@@ -239,7 +239,7 @@ pub fn redraw(app: &tauri::AppHandle) {
         let max_y = doc
             .nodes
             .iter()
-            .map(|node| node.y + design_core::node_height(&node.kind))
+            .map(|node| node.y + node.height())
             .fold(0., f32::max)
             + 30.;
         n.view.viewport.zoom = (rect[2] / (max_x - min_x))

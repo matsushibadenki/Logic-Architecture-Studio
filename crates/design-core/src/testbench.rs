@@ -148,7 +148,6 @@ impl Testbench {
             return self.run(&doc.flatten()?);
         }
         Self::validate_rows(doc, &self.rows)?;
-        doc.validate(true)?;
         if self.rows.len().saturating_mul(doc.nodes.len()) > 524_288 {
             return Err("Trace exceeds 524288 node samples; use fewer cycles".into());
         }
@@ -163,25 +162,11 @@ impl Testbench {
         let samples = if doc.nodes.iter().any(|n| n.kind == Kind::Register) {
             doc.simulate_cycles(&cycles)?
         } else {
+            let plan = crate::evaluation::EvaluationPlan::combinational(doc)?;
             cycles
                 .iter()
-                .map(|cycle| {
-                    let inputs = doc.parse_signals(&cycle.inputs, Kind::Input)?;
-                    let values = doc.evaluate_signals(&inputs)?;
-                    let outputs = doc
-                        .nodes
-                        .iter()
-                        .filter(|n| n.kind == Kind::Output)
-                        .map(|n| (n.name.clone(), n.decimal(values[&n.id])))
-                        .collect();
-                    Ok(CycleSample {
-                        reset: cycle.reset,
-                        values,
-                        outputs,
-                        registers: BTreeMap::new(),
-                    })
-                })
-                .collect::<Result<Vec<_>, String>>()?
+                .map(|cycle| plan.sample(cycle))
+                .collect::<Result<Vec<_>, _>>()?
         };
         let report = self.check_samples(doc, &samples)?;
         Ok((cycles, samples, report))

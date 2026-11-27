@@ -32,7 +32,7 @@ import {
   nativeAction,
   openPreferences,
 } from "./store";
-import { translation, type Key } from "./i18n";
+import { dictionaries, translation, type Key } from "./i18n";
 import { Panel, IconButton, Hint, DropZone } from "./components/ui";
 import { Hierarchy, Library } from "./components/Sidebar";
 import { Inspector } from "./components/Inspector";
@@ -144,7 +144,9 @@ export default function App() {
       <TriangleAlert size={17} />
       <div>
         <strong>{t("error")}</strong>
-        <span>{error}</span>
+        <span>
+          {error === dictionaries.en.layoutOutOfRange ? t("layoutOutOfRange") : error}
+        </span>
       </div>
       <IconButton icon={X} label={t("close")} onClick={clearError} />
     </div>

@@ -155,11 +155,8 @@ async fn generate(request: &ModelRequest, context: Value, schema: Value) -> Resu
 }
 
 fn patch_schema() -> Result<Value, String> {
-    let schema = design_core::protocol::tools()
-        .into_iter()
-        .find(|entry| entry["name"] == "design.propose_patch")
-        .ok_or("Missing circuit schema.")?["inputSchema"]
-        .clone();
+    let schema = design_core::protocol::input_schema("design.propose_patch")
+        .ok_or("Missing circuit schema.")?;
     Ok(json!({
         "type": "object",
         "required": ["label", "operations"],

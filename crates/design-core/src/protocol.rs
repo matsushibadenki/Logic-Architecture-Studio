@@ -1,6 +1,21 @@
 use serde_json::{json, Value};
-// Schemas are shared by MCP discovery and the GUI command service.
+use std::sync::LazyLock;
+
+// Discovery and per-request validation use the same immutable catalog.
+static TOOLS: LazyLock<Vec<Value>> = LazyLock::new(build_tools);
+
 pub fn tools() -> Vec<Value> {
+    TOOLS.clone()
+}
+
+pub fn input_schema(method: &str) -> Option<&'static Value> {
+    TOOLS
+        .iter()
+        .find(|tool| tool["name"] == method)
+        .map(|tool| &tool["inputSchema"])
+}
+
+fn build_tools() -> Vec<Value> {
     let revision = json!({"type":"integer","minimum":0});
     let identifier = json!({"type":"string","minLength":1,"maxLength":64});
     let kind = json!({"enum":["input","output","add","sub","and","nand","nor","xnor","or","xor","not","mux","register","constant","slice","concat","zero_extend","sign_extend","module"]});

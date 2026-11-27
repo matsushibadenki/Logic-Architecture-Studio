@@ -409,11 +409,8 @@ impl Service {
     }
 }
 fn validate_request(method: &str, args: &Value) -> Result<(), String> {
-    if let Some(definition) = design_core::protocol::tools()
-        .iter()
-        .find(|t| t["name"] == method)
-    {
-        design_core::protocol::validate(&definition["inputSchema"], args)?;
+    if let Some(schema) = design_core::protocol::input_schema(method) {
+        design_core::protocol::validate(schema, args)?;
     }
     Ok(())
 }

@@ -723,3 +723,33 @@ the visible count (119 each) but raised end-to-end p95 from 50.03 to
 50.55 ms. Preparing buffers before acquisition raised p95 from 50.04 to
 50.53 ms with visible counts of 125 and 128. Those trials used four
 matched pairs per setting.
+
+### Compare matched preview runs
+
+Pair alternating runs explicitly to keep run-to-run variation visible:
+
+```sh
+python3 scripts/ui_benchmark.py compare-native-drag \
+  --pair before-1.json after-1.json \
+  --pair before-2.json after-2.json
+```
+
+The command checks replay geometry and input positions, display identity,
+two-drawable configuration, and a measured input rate within 1% of 250 Hz.
+It reports after-minus-before p95 differences for input-to-display,
+acquisition, and post-GPU display wait. It includes both total visible
+previews and the number of pairs that improved latency without losing
+previews. The median of the paired deltas preserves the pairing when
+summarizing the results.
+
+## Circuit validation, layout and stimulus evaluation
+
+On 2026-11-28, two macOS release binaries ran the same in-process Rust driver, first with the core from `02f6ba3` and then with the refactored core. Each value is the median of five calls measured with `Instant`. Builds and integration tests had finished before the reported runs.
+
+| Operation | Before | After |
+|---|---:|---:|
+| Validate and generate Verilog | 92.8 ms | 10.7 ms |
+| Auto-arrange, commit in memory and serialize the document | 2,139.7 ms | 14.0 ms |
+| Run 24 saved stimuli with expectations and retain all node samples | 5,649.7 ms | 197.1 ms |
+
+The fixture has one 1-bit input (`n0`), 1,998 NOT gates and one output. Gate `i` reads node `max(0, i − 40)`. The output reads the last gate. The input alternates between 0 and 1 and the expected output equals the input. Both binaries passed all 24 expectations and produced matching hashes for the Verilog text, serialized layout and full simulation samples. These timings cover CPU-side circuit operations. Display presentation and durable filesystem writes are measured separately.

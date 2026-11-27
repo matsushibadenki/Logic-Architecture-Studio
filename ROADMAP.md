@@ -34,6 +34,7 @@
 ## Core / Phase 1
 
 - 🟢 [Done] Rust-owned typed combinational IR, atomic patch validation and revision conflicts.
+- 🟢 [Done] Shared graph traversal for layout and RTL, indexed port drivers, and one evaluation plan per simulation or vector suite. Native canvas fitting uses module port counts. Out-of-range layouts leave the revision and Undo history intact.
 - 🟢 [Done] Single service shared by GUI/MCP; private Unix socket and exclusive owner lock.
 - 🟢 [Done] Snapshot Undo/Redo, atomic JSON replacement, rollback on storage failure.
 - 🟢 [Done] MCP stdio, shared tool schemas, IR resource, research prompt and read-only default.
@@ -59,6 +60,8 @@
 - 🔴 [Later] SQLite Design Store and longer-term revision archives.
 
 ## UI / Rendering
+
+- 🟠 [Next] Reconcile the three previously failing standalone UNGE renderer checks for localized port labels, repeated moves and high fan-out updates with the current LOD and index behavior. Keep fresh-rebuild equivalence covered.
 
 - 🟢 [Done] Smallest zoom level (<0.35) uses full role-colored tiles and large centered bold white symbols; detailed/intermediate layouts retained. All ten node kinds verified with Metal rendering and LOD boundary tests; browser zoom-out/zoom-in transitions visually verified.
 
@@ -111,6 +114,8 @@
 - 🟢 [Done] Group sustained-drag preview timings by observed earlier presentations after GPU completion. Matched macOS traces at 250 Hz show two drawables reduced preview input-to-display p95 from 66.87 to 51.44 ms, with drawable acquisition p95 close in both configurations. See docs/PERFORMANCE.md.
 - 🟢 [Done] Add opt-in drag redraw spacing shared by the native scheduler and its replay. Matched 2 Drawable macOS runs at 250 Hz measured lower p95 with 20 ms spacing (51.68 → 46.14 ms) and fewer visible previews (111 → 74). The default remains unpaced.
 - 🟢 [Done] Add an experimental macOS preview path that assembles the scene while the window thread acquires a drawable. Six matched 2 Drawable pairs at 250 Hz measured 51.60 → 50.42 ms median run p95 and 176 visible previews in each arm. See docs/PERFORMANCE.md.
+- 🟢 [Done] Add paired native drag analysis for the two-drawable baseline. Report paired p95 deltas, per-pair wins and regressions, and which pairs improved without losing visible previews. Reject mismatched replay conditions, display, drawable depth, or input cadence.
+- 🟢 [Done] Traverse retained edge metadata and drag-preview routes together in UUID order. Reuse one wire-cache borrow for the scene pass and retain viewport filtering and wire paint order.
 - 🟠 [Next] Obtain a repeatable sustained-drag tail reduction before enabling a new scheduler by default. Measure acquisition and GPU-to-display wait alongside actual preview throughput.
 - 🟢 [Done] Return the next native delta in a durable position-only commit acknowledgement when its base cursor matches. Apply it before drawing, retain polling for stale bases, and verify the saved-to-visible interval on macOS.
 - 🟢 [Done] Trace committed frames from save acknowledgement through delta application, draw start, GPU execution and Metal presentation. Submit the native frame before notifying WebViews for inline commits.

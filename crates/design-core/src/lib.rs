@@ -1,5 +1,7 @@
+mod evaluation;
 mod preferences;
 pub mod testbench;
+mod topology;
 pub use preferences::{default_node_colors, parse_node_color, AppearanceTheme};
 pub mod entities;
 pub mod model;
@@ -319,8 +321,17 @@ pub fn apply(document: &Document, operations: &[Operation]) -> Result<Document, 
     next.validate(false)?;
     Ok(next)
 }
+impl Patch {
+    fn only_moves_nodes(&self) -> bool {
+        !self.operations.is_empty() && self.operations.iter().all(|op| matches!(op,
+            Operation::UpdateNode { name: None, kind: None, width: None, signed: None, config: None, x, y, .. }
+            if x.is_some() || y.is_some()
+        ))
+    }
+}
+
 pub fn is_position_patch(args: &Value) -> bool {
-    serde_json::from_value::<Patch>(args.clone()).is_ok_and(|p| !p.operations.is_empty() && p.operations.iter().all(|op|matches!(op,Operation::UpdateNode {name:None,kind:None,width:None,signed:None,config:None,x,y,..} if x.is_some() || y.is_some())))
+    serde_json::from_value::<Patch>(args.clone()).is_ok_and(|p| p.only_moves_nodes())
 }
 fn apply_positions(document: &Document, operations: &[Operation]) -> Result<Document, String> {
     if operations.is_empty() || operations.len() > 512 {
@@ -341,10 +352,7 @@ fn apply_positions(document: &Document, operations: &[Operation]) -> Result<Docu
         else {
             return Err("Position-only patch required".into());
         };
-        if x.iter()
-            .chain(y)
-            .any(|v| !v.is_finite() || v.abs() > 100000.)
-        {
+        if x.iter().chain(y).any(|&value| !valid_coordinate(value)) {
             return Err("Invalid coordinates".into());
         }
         next.nodes.update(id, |node| {
@@ -690,8 +698,7 @@ impl Workspace {
                 if patch.label.len() > 160 {
                     return Err("Patch label too long".into());
                 }
-                let positions = patch.operations.iter().all(|op|matches!(op,Operation::UpdateNode {name:None,kind:None,width:None,signed:None,config:None,x,y,..} if x.is_some() || y.is_some()));
-                let next = if positions {
+                let next = if patch.only_moves_nodes() {
                     apply_positions(&self.document, &patch.operations)?
                 } else {
                     apply(&self.document, &patch.operations)?
@@ -746,29 +753,7 @@ impl Workspace {
             }
             "layout.auto_arrange" => {
                 self.check_revision(revision(&args)?)?;
-                let mut doc = (*self.document).clone();
-                let mut levels: BTreeMap<String, usize> = BTreeMap::new();
-                let mut next_y: BTreeMap<usize, f32> = BTreeMap::new();
-                for id in doc.order()? {
-                    let level = doc
-                        .edges
-                        .iter()
-                        .filter(|e| {
-                            e.to == id
-                                && doc.node(&id).is_ok_and(|node| {
-                                    !matches!(node.kind, Kind::Register | Kind::Module)
-                                })
-                        })
-                        .map(|e| levels[&e.from] + 1)
-                        .max()
-                        .unwrap_or(0);
-                    levels.insert(id.clone(), level);
-                    let y = next_y.entry(level).or_insert(70.);
-                    let n = doc.nodes.iter_mut().find(|n| n.id == id).unwrap();
-                    n.x = 40. + level as f32 * (NODE_WIDTH + 72.);
-                    n.y = *y;
-                    *y += n.height() + 32.;
-                }
+                let doc = self.document.auto_arranged()?;
                 self.commit(doc, "layout.auto_arrange".into(), actor);
                 Ok(self.reply(compact))
             }
@@ -1168,7 +1153,11 @@ pub fn alu_vectors(doc: &Document) -> Result<Vec<TestVector>, String> {
     Ok(vectors)
 }
 pub fn verify(doc: &Document, rev: u64, vectors: &[TestVector]) -> Result<TestReport, String> {
-    doc.validate(true)?;
+    if doc.has_modules() {
+        doc.validate(true)?;
+        return verify(&doc.flatten()?, rev, vectors);
+    }
+    let plan = evaluation::EvaluationPlan::combinational(doc)?;
     if vectors.is_empty() || vectors.len() > 4096 {
         return Err("Use 1–4096 test vectors".into());
     }
@@ -1187,7 +1176,7 @@ pub fn verify(doc: &Document, rev: u64, vectors: &[TestVector]) -> Result<TestRe
         }
         let inputs = doc.parse_signals(&v.inputs, Kind::Input)?;
         let expected = doc.parse_signals(&v.expected, Kind::Output)?;
-        let actual = doc.evaluate(&inputs)?;
+        let actual = plan.outputs(&inputs)?;
         if actual == expected {
             passed += 1;
         } else if failures.len() < 20 {

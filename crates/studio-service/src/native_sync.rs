@@ -15,19 +15,21 @@ pub struct Snapshot {
     pub meta: Value,
     pub cursor: String,
 }
+const META_FIELDS: &[&str] = &[
+    "revision",
+    "selected",
+    "selection",
+    "locale",
+    "node_colors",
+    "gate_symbols",
+    "hide_gate_frames",
+    "theme",
+    "panels",
+];
+
 pub fn filter(delta: &Value) -> Value {
     let mut set = serde_json::Map::new();
-    for key in [
-        "revision",
-        "selected",
-        "selection",
-        "locale",
-        "node_colors",
-        "gate_symbols",
-        "hide_gate_frames",
-        "theme",
-        "panels",
-    ] {
+    for &key in META_FIELDS {
         if let Some(v) = delta["set"].get(key) {
             set.insert(key.into(), v.clone());
         }
@@ -41,7 +43,6 @@ pub fn filter(delta: &Value) -> Value {
 fn collection<T: Clone + DeserializeOwned + Entity>(
     old: &mut Entities<T>,
     delta: &Value,
-    id: impl Fn(&T) -> String,
 ) -> Result<(), String> {
     let upserts: Vec<T> =
         serde_json::from_value(delta["upsert"].clone()).map_err(|e| e.to_string())?;
@@ -59,8 +60,9 @@ fn collection<T: Clone + DeserializeOwned + Entity>(
         }
         return Ok(());
     }
-    let mut values: BTreeMap<String, T> = old.iter().map(|v| (id(v), v.clone())).collect();
-    let mut order: Vec<_> = old.iter().map(&id).collect();
+    let mut values: BTreeMap<String, T> =
+        old.iter().map(|v| (v.id().to_owned(), v.clone())).collect();
+    let mut order: Vec<_> = old.iter().map(|v| v.id().to_owned()).collect();
     let remove: Vec<String> =
         serde_json::from_value(delta["remove"].clone()).map_err(|e| e.to_string())?;
     for key in &remove {
@@ -70,11 +72,9 @@ fn collection<T: Clone + DeserializeOwned + Entity>(
     }
     let removed: BTreeSet<_> = remove.iter().collect();
     order.retain(|id| !removed.contains(id));
-    let upsert: Vec<T> =
-        serde_json::from_value(delta["upsert"].clone()).map_err(|e| e.to_string())?;
     let mut seen = BTreeSet::new();
-    for value in upsert {
-        let key = id(&value);
+    for value in upserts {
+        let key = value.id().to_owned();
         if !seen.insert(key.clone()) {
             return Err("Duplicate native delta entity".into());
         }
@@ -137,19 +137,7 @@ pub fn apply(previous: Option<&Snapshot>, response: &Value) -> Result<Snapshot, 
         .ok_or("Missing native deltas")?
     {
         for (key, value) in delta["set"].as_object().ok_or("Invalid native metadata")? {
-            if ![
-                "revision",
-                "selected",
-                "selection",
-                "locale",
-                "node_colors",
-                "gate_symbols",
-                "hide_gate_frames",
-                "theme",
-                "panels",
-            ]
-            .contains(&key.as_str())
-            {
+            if !META_FIELDS.contains(&key.as_str()) {
                 return Err("Unexpected native field".into());
             }
             meta[key] = value.clone();
@@ -163,10 +151,10 @@ pub fn apply(previous: Option<&Snapshot>, response: &Value) -> Result<Snapshot, 
                 doc.name = name.as_str().ok_or("Invalid document name")?.into();
             }
             if let Some(nodes) = change.get("nodes") {
-                collection(&mut doc.nodes, nodes, |n| n.id.clone())?;
+                collection(&mut doc.nodes, nodes)?;
             }
             if let Some(edges) = change.get("edges") {
-                collection(&mut doc.edges, edges, |e| e.id.clone())?;
+                collection(&mut doc.edges, edges)?;
             }
         }
     }

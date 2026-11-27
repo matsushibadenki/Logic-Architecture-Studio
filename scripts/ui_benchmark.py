@@ -63,7 +63,7 @@ def summarize(paths, out, moves=12):
               "native p50", round(r["native_present_request_ms"]["p50"], 2))
 
 
-def summarize_native_drag(paths):
+def native_drag_runs(paths):
     reference = None
     results = []
     for path in paths:
@@ -79,6 +79,8 @@ def summarize_native_drag(paths):
         reference = condition
         times = [sample["input_at"] for sample in inputs]
         intervals = [(b - a) * 1000 for a, b in zip(times, times[1:])]
+        if any(interval <= 0 for interval in intervals):
+            raise SystemExit(f"Non-monotonic replay timestamps: {path}")
         frames = trace["frames"]
         shown = [frame for frame in frames if frame["presented_at"] > 0]
         if not shown or any(times[frame["input"]] > frame["delivered_at"] or
@@ -194,7 +196,48 @@ def summarize_native_drag(paths):
             ranked = sorted(breakdown, key=lambda row: row["total_ms"])
             result["p95_frame_breakdown"] = ranked[math.ceil(len(ranked) * .95) - 1]
         results.append(result)
-    print(json.dumps(results, indent=2))
+    return results
+
+
+def compare_native_drag(pairs):
+    paths = [path for pair in pairs for path in pair]
+    if len({path.resolve() for path in paths}) != len(paths):
+        raise SystemExit("Each paired run must use a distinct trace file")
+    runs = native_drag_runs(paths)
+    fixed = {(run.get("display"), run.get("frame_latency")) for run in runs}
+    if len(fixed) != 1 or any(
+        "stages" not in run or run.get("frame_latency") != 1
+        or "display" not in run or abs(run["input_hz"] - 250) > 2.5
+        for run in runs
+    ):
+        raise SystemExit("Paired comparison requires one display, two drawables, stage timings, and measured input within 1% of 250 Hz")
+
+    metrics = ("total_ms", "acquire_ms", "display_wait_ms")
+    rows = []
+    for before, after in zip(runs[::2], runs[1::2]):
+        rows.append(dict(
+            before=before["trace"], after=after["trace"],
+            input_hz=[before["input_hz"], after["input_hz"]],
+            delta_p95_ms={key: after["stages"][key]["p95"] - before["stages"][key]["p95"]
+                          for key in metrics},
+            visible_previews=[before["presented_frames"], after["presented_frames"]],
+        ))
+    deltas = [row["delta_p95_ms"]["total_ms"] for row in rows]
+    wins = sum(delta < 0 for delta in deltas)
+    losses = sum(delta > 0 for delta in deltas)
+    return dict(
+        pairs=rows, improved=wins, regressed=losses, tied=len(rows) - wins - losses,
+        median_paired_delta_p95_ms={
+            key: statistics.median(row["delta_p95_ms"][key] for row in rows)
+            for key in metrics
+        },
+        visible_previews=[sum(row["visible_previews"][arm] for row in rows) for arm in (0, 1)],
+        pairs_improved_without_fewer_previews=sum(
+            row["delta_p95_ms"]["total_ms"] < 0
+            and row["visible_previews"][1] >= row["visible_previews"][0]
+            for row in rows
+        ),
+    )
 
 
 if __name__ == "__main__":
@@ -210,10 +253,15 @@ if __name__ == "__main__":
     report.add_argument("--moves", type=int, default=12)
     native_drag = commands.add_parser("summarize-native-drag")
     native_drag.add_argument("traces", nargs="+", type=Path)
+    compare = commands.add_parser("compare-native-drag")
+    compare.add_argument("--pair", nargs=2, type=Path, action="append",
+                         required=True, metavar=("BEFORE", "AFTER"))
     args = parser.parse_args()
     if args.command == "prepare":
         prepare(args.root, args.nodes, args.wide_fanout)
     elif args.command == "summarize":
         summarize(args.traces, args.out, args.moves)
+    elif args.command == "summarize-native-drag":
+        print(json.dumps(native_drag_runs(args.traces), indent=2))
     else:
-        summarize_native_drag(args.traces)
+        print(json.dumps(compare_native_drag(args.pair), indent=2))

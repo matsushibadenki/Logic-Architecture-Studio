@@ -215,7 +215,7 @@ fn begin(app: &tauri::AppHandle) -> Result<([f32; 2], f32), String> {
     let view = native.view.viewport;
     let position = [
         (node.x + design_core::NODE_WIDTH * 0.5 - view.origin[0]) * view.zoom,
-        (node.y + design_core::node_height(&node.kind) * 0.5 - view.origin[1]) * view.zoom,
+        (node.y + node.height() * 0.5 - view.origin[1]) * view.zoom,
     ];
     native.view.interaction.set_grid_snap(false);
     native.view.pointer(

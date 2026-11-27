@@ -580,7 +580,7 @@ mod tests {
                         assert!(scene.labels.iter().any(|l| l.text == expected));
                     }
                     let add = Document::demo().node("add").unwrap().clone();
-                    let center = [add.x + NODE_WIDTH / 2., add.y + node_height(&add.kind) / 2.];
+                    let center = [add.x + NODE_WIDTH / 2., add.y + add.height() / 2.];
                     let fill = scene
                         .quads
                         .iter()

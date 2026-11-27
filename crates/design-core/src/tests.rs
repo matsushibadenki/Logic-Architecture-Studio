@@ -322,8 +322,8 @@ fn auto_arrange_avoids_overlap_with_square_and_tall_nodes_in_same_column() {
             assert!(
                 a.x + NODE_WIDTH <= b.x
                     || b.x + NODE_WIDTH <= a.x
-                    || a.y + node_height(&a.kind) <= b.y
-                    || b.y + node_height(&b.kind) <= a.y,
+                    || a.y + a.height() <= b.y
+                    || b.y + b.height() <= a.y,
                 "{} overlaps {}",
                 a.id,
                 b.id
@@ -331,6 +331,37 @@ fn auto_arrange_avoids_overlap_with_square_and_tall_nodes_in_same_column() {
         }
     }
     workspace.document.validate(false).unwrap();
+}
+
+#[test]
+fn oversized_layout_keeps_the_persistable_document_and_undo_history() {
+    let mut workspace = Workspace::default();
+    let doc = Arc::make_mut(&mut workspace.document);
+    let input = doc.node("a").unwrap().clone();
+    doc.nodes = (0..320)
+        .map(|i| {
+            let id = format!("input{i}");
+            Node {
+                id: id.clone(),
+                name: id,
+                ..input.clone()
+            }
+        })
+        .collect();
+    doc.edges = Vec::new().into();
+    doc.validate(false).unwrap();
+    let before = workspace.document.clone();
+    let err = workspace
+        .dispatch_view(
+            "layout.auto_arrange",
+            json!({"expected_revision":0}),
+            "test",
+        )
+        .unwrap_err();
+    assert!(err.contains("coordinate range"));
+    assert!(Arc::ptr_eq(&workspace.document, &before));
+    assert!(workspace.undo.is_empty());
+    assert_eq!(workspace.revision, 0);
 }
 
 #[test]

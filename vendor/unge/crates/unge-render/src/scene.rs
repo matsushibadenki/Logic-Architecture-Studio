@@ -1,11 +1,11 @@
-use crate::{LabelCatalog, TextLabel, Theme, labels::label_text};
+use crate::{labels::label_text, LabelCatalog, TextLabel, Theme};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     time::Instant,
 };
-use unge_core::{Command, Document, Id, Locale, Rect, SpatialIndex, Viewport, port_anchor};
-use unge_interaction::{MAX_SELECTION, Preview};
+use unge_core::{port_anchor, Command, Document, Id, Locale, Rect, SpatialIndex, Viewport};
+use unge_interaction::{Preview, MAX_SELECTION};
 
 const MAX_MOVED_NODES: usize = 1024;
 const MAX_REFIT_EDGES: usize = 4096;
@@ -747,21 +747,30 @@ impl SceneIndex {
             }
             Vec::new()
         };
-        let edges = committed_edges.into_iter().map(|id| (id, None)).chain(
-            preview_routes
-                .iter()
-                .flat_map(|cached| &cached.routes)
-                .filter(|(_, _, bounds)| bounds.intersects(cable_area))
-                .map(|(id, route, _)| (*id, Some(route))),
-        );
+        let edges = committed_edges
+            .into_iter()
+            .map(|id| (id, &self.edges[&id], None))
+            .chain(preview_routes.iter().flat_map(|cached| {
+                // The router emits one entry per edge in UUID order, including
+                // blocked routes. Topology changes invalidate the preview cache.
+                debug_assert_eq!(cached.routes.len(), self.edges.len());
+                cached.routes.iter().zip(&self.edges).filter_map(
+                    |((id, route, bounds), (edge_id, edge))| {
+                        debug_assert_eq!(id, edge_id);
+                        bounds
+                            .intersects(cable_area)
+                            .then_some((*id, edge, Some(route)))
+                    },
+                )
+            }));
         timings.edge_query_ms = elapsed_ms(start);
         let start = TIMED.then(Instant::now);
         let first_wire_label = scene.labels.len();
         let mut blocked_ports = HashSet::new();
         let warning_color = palette.cable_invalid.linear();
         let stroke_width = wire_width(viewport.zoom);
-        for (id, preview_route) in edges {
-            let edge = &self.edges[&id];
+        let mut edge_cache = self.edge_cache.borrow_mut();
+        for (id, edge, preview_route) in edges {
             let (points, bridges, blocked) = preview_route
                 .map_or((&edge.points, &edge.bridges, edge.blocked), |route| {
                     (&route.points, &route.bridges, route.blocked)
@@ -821,8 +830,7 @@ impl SceneIndex {
                         .unwrap_or_else(|| palette.tone(labels.tone))
                 });
             let color = color.linear();
-            let cache = self.edge_cache.borrow();
-            if let Some(cached) = cache.get(&id).filter(|c| {
+            if let Some(cached) = edge_cache.get(&id).filter(|c| {
                 c.points == *points
                     && c.bridges == *bridges
                     && c.zoom == viewport.zoom
@@ -832,7 +840,6 @@ impl SceneIndex {
                 scene.quads.extend_from_slice(&cached.quads);
                 scene.geometry_stats.reused_edges += 1;
             } else {
-                drop(cache);
                 let start = scene.quads.len();
                 let bridged;
                 let display = if bridges.is_empty() {
@@ -853,7 +860,7 @@ impl SceneIndex {
                             .push(Quad::stroke(segment[0], segment[1], color, stroke_width));
                     }
                 }
-                self.edge_cache.borrow_mut().insert(
+                edge_cache.insert(
                     id,
                     CachedEdge {
                         points: points.clone(),
